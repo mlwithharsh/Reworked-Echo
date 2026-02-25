@@ -7,9 +7,22 @@ const AIContext = createContext();
 export const AIProvider = ({ children }) => {
   const [status, setStatus] = useState('offline');
   const [personality, setPersonality] = useState('Echo');
+
+  // Automatically clear memory when personality changes
+  useEffect(() => {
+    const wipeMemoryOnSwitch = async () => {
+      try {
+        await memoryAPI.clear();
+        setHistory([]);
+        setLastResponse(null);
+      } catch (err) {
+        console.warn('Failed to auto-wipe memory', err);
+      }
+    };
+    wipeMemoryOnSwitch();
+  }, [personality]);
   const [history, setHistory] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [recordingDuration, setRecordingDuration] = useState(10);
   const [lastResponse, setLastResponse] = useState(null);
 
   const fetchStatus = useCallback(async () => {
@@ -24,9 +37,11 @@ export const AIProvider = ({ children }) => {
   const fetchHistory = useCallback(async () => {
     try {
       const res = await memoryAPI.getHistory();
-      setHistory(res.data.history || []);
+      const historyData = res.data.history || [];
+      // Store in oldest-to-newest order (FIFO)
+      setHistory(Array.isArray(historyData) ? [...historyData].reverse() : []);
     } catch (err) {
-      console.error('Failed to fetch history', err);
+      console.warn('Failed to fetch history', err);
     }
   }, []);
 
@@ -43,28 +58,12 @@ export const AIProvider = ({ children }) => {
       const res = await textAPI.process(text, personality);
       const data = res.data;
       setLastResponse(data);
-      setHistory(prev => [data, ...prev].slice(0, 50));
-      toast.success('Synapse active');
+      // Append to history (newest at bottom)
+      setHistory(prev => [...prev, data].slice(-50));
       return data;
     } catch (err) {
       console.error('API connection failed', err);
       toast.error('Connection failed. Is the backend running?');
-      throw err;
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const processVoice = async (audioBlob) => {
-    setIsProcessing(true);
-    try {
-      const res = await voiceAPI.process(audioBlob, personality);
-      setLastResponse(res.data);
-      setHistory(prev => [res.data, ...prev].slice(0, 50));
-      toast.success('Voice processed');
-      return res.data;
-    } catch (err) {
-      toast.error('Failed to process voice');
       throw err;
     } finally {
       setIsProcessing(false);
@@ -76,7 +75,7 @@ export const AIProvider = ({ children }) => {
       await memoryAPI.clear();
       setHistory([]);
       setLastResponse(null);
-      toast.success('Memory cleared');
+      toast.success('Synapse cleared');
     } catch (err) {
       toast.error('Failed to clear memory');
     }
@@ -89,11 +88,8 @@ export const AIProvider = ({ children }) => {
       setPersonality,
       history,
       isProcessing,
-      recordingDuration,
-      setRecordingDuration,
       lastResponse,
       processText,
-      processVoice,
       clearMemory,
       refreshStatus: fetchStatus
     }}>

@@ -15,15 +15,18 @@ class EchoPersonality(BasePersonality):
 
         # Personality-specific system prompt
         system_prompt = (
-            f"You are {self.name}. "
-            f"Your style: {self.style}. "
-            f"Your goals: {self.goals}. "
-            f"User's emotion: {emotion}\n"
-            f"User's intent: {intent}\n"
-            f"Sentiment: {sentiment}\n"
-            f"User said: {user_input}\n"
-            "Stay in character as a caring companion. "
-            "Reply in 2–3 empathetic, supportive sentences."
+            f"You are {self.name}, an AI companion for emotional support. "
+            f"Style: {self.style}. Goal: {self.goals}. "
+            "NEVER use poetic metaphors or overly flowery language like 'whisper of a smile' or 'casting a glow'. "
+            "Avoid canned phrases like 'lovely to see you' or 'wonderfully'. "
+            "Instead, be direct, human-like, and empathetic. "
+            f"User is feeling {emotion} ({sentiment}). Intent: {intent}. "
+            f"User input: '{user_input}'\n\n"
+            "GUIDELINES:\n"
+            "1. Acknowledge what the user said with genuine interest.\n"
+            "2. Speak like a real person, not a poet. Be warm but grounded.\n"
+            "3. Keep it to 2-3 short, meaningful sentences.\n"
+            "4. If they share something good, be happy with them simply. If bad, be supportive simply."
         )
 
         # Call LLM
@@ -32,7 +35,7 @@ class EchoPersonality(BasePersonality):
             {"role": "user", "content": user_input}
         ]
 
-        response = self.nlp.call_groq_model(messages, max_tokens=150, temperature=0.7)
+        response = self.nlp.call_groq_model(messages, max_tokens=150, temperature=0.8)
 
         if not response:
             response = "I hear you. I'm here for you, always."
