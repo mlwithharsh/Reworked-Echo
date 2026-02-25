@@ -18,9 +18,6 @@ from Core_Brain.nlp_engine.nlp_engine import NLPEngine
 from Core_Brain.memory_manager import MemoryManager
 from Core_Brain.nlp_engine.personality_router import PersonalityRouter
 
-# Load environment variables BEFORE initializing components
-load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'echo-v1-frontend', '.env'))
-
 app = Flask(__name__)
 CORS(app)
 
