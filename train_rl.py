@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import argparse
+import os
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Tuple
+
+os.environ.setdefault("TRL_EXPERIMENTAL_SILENCE", "1")
 
 import torch
+import torch.nn.functional as F
 from peft import LoraConfig
-from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
-from trl import AutoModelForCausalLMWithValueHead, PPOConfig, PPOTrainer
+from transformers import AutoTokenizer
+from trl.experimental.ppo.modeling_value_head import AutoModelForCausalLMWithValueHead
 
 from memory import MemoryRecord, VectorMemoryStore
 from model import ModelConfig, load_model_and_tokenizer
@@ -20,15 +24,26 @@ from rl.state import StatePreprocessor
 @dataclass
 class TrainingConfig:
     model_name: str = "distilgpt2"
-    batch_size: int = 1
-    mini_batch_size: int = 1
     epochs: int = 1
     max_prompt_length: int = 128
-    max_new_tokens: int = 64
+    max_new_tokens: int = 48
+    learning_rate: float = 1.0e-5
+    clip_epsilon: float = 0.2
+    value_coef: float = 0.1
+    entropy_coef: float = 0.01
+    gamma: float = 0.99
     log_dir: str = "logs"
 
 
-def build_policy_and_value_models(model_name: str):
+def get_device() -> str:
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+def build_models(model_name: str, device: str):
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -41,21 +56,47 @@ def build_policy_and_value_models(model_name: str):
         task_type="CAUSAL_LM",
         target_modules=["c_attn", "c_proj"],
     )
-    policy_model = AutoModelForCausalLMWithValueHead.from_pretrained(
-        model_name,
-        peft_config=lora_config,
+    policy_model = AutoModelForCausalLMWithValueHead.from_pretrained(model_name, peft_config=lora_config)
+    reference_model = AutoModelForCausalLMWithValueHead.from_pretrained(model_name)
+    policy_model.to(device)
+    reference_model.to(device)
+    reference_model.eval()
+    return policy_model, reference_model, tokenizer
+
+
+def build_prompt(sample, state, memory_hits) -> str:
+    context_lines = [f"Memory: {record.text}" for record in memory_hits]
+    return (
+        "You are a conversational assistant fine-tuned with reinforcement learning.\n"
+        f"User input: {sample.user_input}\n"
+        f"Emotional state: {state.emotional_state_vector}\n"
+        f"User profile: {state.user_profile_features}\n"
+        f"Conversation history: {state.conversation_history}\n"
+        f"Retrieved context: {context_lines}\n"
+        "Assistant:"
     )
-    ref_model = AutoModelForCausalLMWithValueHead.from_pretrained(model_name)
-    return policy_model, ref_model, tokenizer
 
 
-def safe_generate(text_generator, prompt: str) -> str:
+def safe_generate(model, tokenizer, prompt: str, device: str, max_new_tokens: int) -> Tuple[str, torch.Tensor]:
     try:
-        result = text_generator(prompt, max_new_tokens=64, do_sample=True, top_p=0.9, temperature=0.8)
-        generated = result[0]["generated_text"]
-        return generated[len(prompt) :].strip() or "I understand. Let me help with that."
+        encoded = tokenizer(prompt, return_tensors="pt", truncation=True).to(device)
+        generated = model.pretrained_model.generate(
+            **encoded,
+            max_new_tokens=max_new_tokens,
+            do_sample=True,
+            top_p=0.9,
+            temperature=0.8,
+            pad_token_id=tokenizer.eos_token_id,
+        )
+        response_tokens = generated[:, encoded["input_ids"].shape[1] :]
+        response_text = tokenizer.decode(response_tokens[0], skip_special_tokens=True).strip()
+        if not response_text:
+            response_text = "I understand. Let me help with that."
+        return response_text, generated
     except Exception:
-        return "I understand. Let me help with that."
+        fallback = "I understand. Let me help with that."
+        encoded = tokenizer(prompt + " " + fallback, return_tensors="pt", truncation=True).to(device)
+        return fallback, encoded["input_ids"]
 
 
 def derive_reward_metrics(user_input: str, response_text: str, emotional_state: List[float]) -> Dict[str, float]:
@@ -71,41 +112,75 @@ def derive_reward_metrics(user_input: str, response_text: str, emotional_state: 
     }
 
 
+def compute_logprob_and_value(model, input_ids: torch.Tensor, prompt_length: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    logits, _, values = model(input_ids=input_ids)
+    log_probs = F.log_softmax(logits[:, :-1, :], dim=-1)
+    target_tokens = input_ids[:, 1:]
+    token_log_probs = log_probs.gather(-1, target_tokens.unsqueeze(-1)).squeeze(-1)
+    response_log_probs = token_log_probs[:, prompt_length - 1 :]
+    response_values = values[:, prompt_length - 1 : -1]
+    return response_log_probs, response_values, logits
+
+
+def ppo_update(
+    policy_model,
+    reference_model,
+    optimizer,
+    full_sequence: torch.Tensor,
+    prompt_length: int,
+    reward_value: float,
+    config: TrainingConfig,
+):
+    with torch.no_grad():
+        old_log_probs, old_values, _ = compute_logprob_and_value(policy_model, full_sequence, prompt_length)
+        ref_log_probs, _, _ = compute_logprob_and_value(reference_model, full_sequence, prompt_length)
+
+    new_log_probs, new_values, logits = compute_logprob_and_value(policy_model, full_sequence, prompt_length)
+    sequence_reward = torch.full_like(new_values, reward_value)
+    advantage = sequence_reward - old_values.detach()
+
+    ratio = torch.exp(new_log_probs - old_log_probs.detach())
+    unclipped = ratio * advantage
+    clipped = torch.clamp(ratio, 1 - config.clip_epsilon, 1 + config.clip_epsilon) * advantage
+    policy_loss = -torch.min(unclipped, clipped).mean()
+
+    value_loss = F.mse_loss(new_values, sequence_reward)
+    probs = F.softmax(logits[:, :-1, :], dim=-1)
+    entropy = -(probs * F.log_softmax(logits[:, :-1, :], dim=-1)).sum(dim=-1).mean()
+    kl_term = (new_log_probs - ref_log_probs.detach()).mean()
+
+    total_loss = policy_loss + config.value_coef * value_loss - config.entropy_coef * entropy + 0.05 * kl_term
+
+    optimizer.zero_grad()
+    total_loss.backward()
+    optimizer.step()
+
+    return {
+        "ppo/loss/policy": float(policy_loss.detach().cpu()),
+        "ppo/loss/value": float(value_loss.detach().cpu()),
+        "ppo/loss/total": float(total_loss.detach().cpu()),
+        "ppo/policy/entropy": float(entropy.detach().cpu()),
+        "ppo/policy/kl": float(kl_term.detach().cpu()),
+        "ppo/advantage/mean": float(advantage.mean().detach().cpu()),
+    }
+
+
 def run_training(config: TrainingConfig) -> None:
     logger = configure_logger(config.log_dir)
     writer = build_writer(f"{config.log_dir}/tensorboard")
+    device = get_device()
 
-    # Base model setup for serving and compatibility checks.
     _, _, base_metadata = load_model_and_tokenizer(ModelConfig(model_name=config.model_name))
     logger.info("Base model loaded: %s", base_metadata)
 
-    policy_model, ref_model, tokenizer = build_policy_and_value_models(config.model_name)
-    ppo_config = PPOConfig(
-        model_name=config.model_name,
-        learning_rate=1.41e-5,
-        batch_size=config.batch_size,
-        mini_batch_size=config.mini_batch_size,
-        optimize_device_cache=torch.cuda.is_available(),
-        log_with=None,
-    )
-    ppo_trainer = PPOTrainer(
-        config=ppo_config,
-        model=policy_model,
-        ref_model=ref_model,
-        tokenizer=tokenizer,
-    )
+    policy_model, reference_model, tokenizer = build_models(config.model_name, device)
+    optimizer = torch.optim.AdamW(policy_model.parameters(), lr=config.learning_rate)
 
-    text_generator = pipeline(
-        "text-generation",
-        model=policy_model.pretrained_model,
-        tokenizer=tokenizer,
-        device=0 if torch.cuda.is_available() else -1,
-    )
     reward_function = RewardFunction()
     state_preprocessor = StatePreprocessor()
     memory_store = VectorMemoryStore()
-
     dataset = build_demo_dataset()
+
     step_index = 0
     for epoch in range(config.epochs):
         for sample in dataset:
@@ -116,20 +191,14 @@ def run_training(config: TrainingConfig) -> None:
                 user_profile_features=sample.profile,
             )
             memory_hits = memory_store.search(sample.user_input, top_k=2)
-            context_lines = [f"Memory: {record.text}" for record in memory_hits]
-            prompt = (
-                "You are a conversational assistant fine-tuned with reinforcement learning.\n"
-                f"User input: {sample.user_input}\n"
-                f"Emotional state: {state.emotional_state_vector}\n"
-                f"User profile: {state.user_profile_features}\n"
-                f"Conversation history: {state.conversation_history}\n"
-                f"Retrieved context: {context_lines}\n"
-                "Assistant:"
-            )
+            prompt = build_prompt(sample, state, memory_hits)
+            prompt_tokens = tokenizer(prompt, return_tensors="pt", truncation=True).to(device)
+            prompt_length = int(prompt_tokens["input_ids"].shape[1])
 
-            query_tensor = tokenizer.encode(prompt, return_tensors="pt").to(ppo_trainer.accelerator.device)
-            response_text = safe_generate(text_generator, prompt)
-            response_tensor = tokenizer.encode(response_text, return_tensors="pt").to(ppo_trainer.accelerator.device)
+            response_text, full_sequence = safe_generate(policy_model, tokenizer, prompt, device, config.max_new_tokens)
+            if full_sequence.dim() == 1:
+                full_sequence = full_sequence.unsqueeze(0)
+            full_sequence = full_sequence.to(device)
 
             reward_metrics = derive_reward_metrics(
                 user_input=sample.user_input,
@@ -137,7 +206,6 @@ def run_training(config: TrainingConfig) -> None:
                 emotional_state=state.emotional_state_vector,
             )
             reward = reward_function.compute(response_text=response_text, metrics=reward_metrics)
-            rewards = [torch.tensor(reward.total, dtype=torch.float32).to(ppo_trainer.accelerator.device)]
 
             logger.info("state=%s", state.to_dict())
             logger.info("action=%s", response_text)
@@ -154,7 +222,15 @@ def run_training(config: TrainingConfig) -> None:
             )
 
             try:
-                stats = ppo_trainer.step([query_tensor.squeeze(0)], [response_tensor.squeeze(0)], rewards)
+                stats = ppo_update(
+                    policy_model=policy_model,
+                    reference_model=reference_model,
+                    optimizer=optimizer,
+                    full_sequence=full_sequence,
+                    prompt_length=prompt_length,
+                    reward_value=reward.total,
+                    config=config,
+                )
             except Exception as error:
                 logger.exception("PPO update failed at step %s: %s", step_index, error)
                 stats = {"ppo/loss/total": 0.0, "ppo/error": str(error)}
@@ -180,15 +256,11 @@ def parse_args() -> TrainingConfig:
     parser = argparse.ArgumentParser(description="Run PPO fine-tuning for a conversational model.")
     parser.add_argument("--model-name", default="distilgpt2")
     parser.add_argument("--epochs", type=int, default=1)
-    parser.add_argument("--batch-size", type=int, default=1)
-    parser.add_argument("--mini-batch-size", type=int, default=1)
     parser.add_argument("--log-dir", default="logs")
     args = parser.parse_args()
     return TrainingConfig(
         model_name=args.model_name,
         epochs=args.epochs,
-        batch_size=args.batch_size,
-        mini_batch_size=args.mini_batch_size,
         log_dir=args.log_dir,
     )
 
