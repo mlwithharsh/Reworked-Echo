@@ -2,13 +2,13 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import { useAI } from '../context/AIContext';
-import PersonalitySelector from '../components/PersonalitySelector';
+import FeedbackBar from '../components/FeedbackBar';
+import PreferenceSliders from '../components/PreferenceSliders';
 import { 
   Send, 
   ArrowLeft, 
   Sparkles, 
   Loader2, 
-  User, 
   Heart,
   Smile,
   Target,
@@ -17,7 +17,7 @@ import {
 
 const ChatPage = () => {
   const [inputText, setInputText] = useState('');
-  const { isProcessing, processText, lastResponse, history } = useAI();
+  const { isProcessing, processText, history, profile, updateProfile, submitFeedback, modelVersions } = useAI();
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
 
@@ -69,15 +69,30 @@ const ChatPage = () => {
         <div className="flex items-center space-x-3">
           <div className="hidden sm:flex items-center space-x-2 px-4 py-1.5 rounded-full bg-solace-purple/10 border border-solace-purple/20">
             <Sparkles className="w-3 h-3 text-solace-purple-glow" />
-            <span className="text-[10px] font-bold text-solace-purple-glow uppercase tracking-widest">ECHO_Link_Stable</span>
+            <span className="text-[10px] font-bold text-solace-purple-glow uppercase tracking-widest">Adaptive Serving</span>
           </div>
-          <PersonalitySelector />
         </div>
       </header>
 
-      {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto px-6 py-8 space-y-8 scrollbar-hide">
-        <div className="max-w-4xl mx-auto space-y-8">
+      <div className="flex-1 overflow-hidden">
+        <div className="h-full grid lg:grid-cols-[320px,1fr]">
+          <aside className="border-r border-white/5 p-6 overflow-y-auto">
+            <PreferenceSliders profile={profile} onChange={updateProfile} />
+            <div className="mt-6 rounded-[1.75rem] bg-white/5 border border-white/10 p-5">
+              <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-text-muted">Model Versions</p>
+              <div className="mt-3 space-y-2">
+                {modelVersions.slice(0, 3).map((item, index) => (
+                  <div key={`${item.version}-${index}`} className="rounded-2xl bg-background-soft border border-white/5 px-4 py-3">
+                    <p className="text-xs font-bold text-white uppercase tracking-widest">{item.version}</p>
+                    <p className="text-[10px] uppercase tracking-[0.2em] text-text-muted mt-1">Bucket {item.ab_bucket || 'A'}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </aside>
+
+          <div className="overflow-y-auto px-6 py-8 space-y-8 scrollbar-hide">
+            <div className="max-w-4xl mx-auto space-y-8">
           {history.length === 0 && !isProcessing && (
             <div className="flex flex-col items-center justify-center h-[60vh] text-center space-y-6">
               <div className="w-20 h-20 rounded-3xl bg-white/5 flex items-center justify-center animate-pulse">
@@ -124,16 +139,22 @@ const ChatPage = () => {
 
                 {/* Metrics for each message */}
                 <div className="flex space-x-3 overflow-x-auto pb-2 scrollbar-hide">
-                  <MetricChip icon={Smile} label="Emotion" value={msg.emotion || 'CALM'} color="#8b5cf6" />
-                  <MetricChip icon={Target} label="Intent" value={msg.intent || 'SUPPORT'} color="#3b82f6" />
-                  <MetricChip icon={Activity} label="Sentiment" value={msg.sentiment || 'POSITIVE'} color="#06b6d4" />
-                  <MetricChip icon={Sparkles} label="Policy" value={msg.policy || 'ADAPTIVE'} color="#f59e0b" />
+                  <MetricChip icon={Smile} label="Support" value={String(Math.round((profile?.support_preference || 0.5) * 100))} color="#8b5cf6" />
+                  <MetricChip icon={Target} label="Task" value={String(Math.round((profile?.task_focus || 0.5) * 100))} color="#3b82f6" />
+                  <MetricChip icon={Activity} label="Brevity" value={String(Math.round((profile?.brevity_preference || 0.5) * 100))} color="#06b6d4" />
+                  <MetricChip icon={Sparkles} label="Model" value={msg.model_version || msg.metadata?.model_version || 'BASELINE'} color="#f59e0b" />
                 </div>
 
-                {msg.reflection?.summary && (
+                {msg.interaction_id && !msg.pending && (
+                  <FeedbackBar interactionId={msg.interaction_id} onSubmit={submitFeedback} />
+                )}
+
+                {msg.metadata?.ab_bucket && (
                   <div className="max-w-[80%] px-4 py-3 rounded-2xl bg-white/5 border border-white/5">
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-1">Adaptive Reflection</p>
-                    <p className="text-xs text-text-secondary">{msg.reflection.summary}</p>
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-1">Learning Status</p>
+                    <p className="text-xs text-text-secondary">
+                      Adapting to your preferences. Current bucket: {msg.metadata.ab_bucket}. Cache hit: {String(msg.metadata.cache_hit)}.
+                    </p>
                   </div>
                 )}
               </motion.div>
@@ -159,6 +180,8 @@ const ChatPage = () => {
             </motion.div>
           )}
           <div ref={messagesEndRef} />
+            </div>
+          </div>
         </div>
       </div>
 
