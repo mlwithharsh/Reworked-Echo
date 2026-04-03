@@ -158,3 +158,12 @@ class SupabaseRepository:
             return batch
         result = self.client.table("feedback").select("reward,tags,vote,interaction_id,interactions(*)").limit(limit).execute()
         return result.data or []
+
+    def clear_history(self, user_id: str) -> None:
+        if not self.client:
+            self.local_interactions = {
+                k: v for k, v in self.local_interactions.items() if v.user_id != user_id
+            }
+            return
+        self.client.table("interactions").delete().eq("user_id", user_id).execute()
+        self.client.table("embeddings").delete().eq("user_id", user_id).execute()

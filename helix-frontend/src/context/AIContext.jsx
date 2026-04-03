@@ -58,6 +58,18 @@ export const AIProvider = ({ children }) => {
     return () => clearInterval(interval);
   }, [fetchStatus, fetchHistory, fetchProfile]);
 
+  useEffect(() => {
+    const clear = async () => {
+      try {
+        await userAPI.clearHistory(userId);
+      } catch (err) {
+        console.warn('Failed to clear backend history', err);
+      }
+      setHistory([]);
+    };
+    clear();
+  }, [personality, userId]);
+
   const processText = async (text) => {
     setIsProcessing(true);
     const draft = {

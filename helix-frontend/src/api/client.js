@@ -18,6 +18,7 @@ export const userAPI = {
   getProfile: (userId) => api.get(`/api/users/${userId}/profile`),
   updateProfile: (userId, profile) => api.put(`/api/users/${userId}/profile`, { ...profile, user_id: userId }),
   getHistory: (userId) => api.get(`/api/users/${userId}/history`),
+  clearHistory: (userId) => api.post(`/api/users/${userId}/clear`),
 };
 
 export const textAPI = {

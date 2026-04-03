@@ -163,3 +163,9 @@ async def trigger_training(request: TrainingRunRequest, background_tasks: Backgr
 @app.get("/api/model/versions")
 async def get_versions(_: AuthDep, __: RateDep):
     return {"items": repository.list_model_versions()}
+
+
+@app.post("/api/users/{user_id}/clear")
+async def clear_history(user_id: str, _: AuthDep, __: RateDep):
+    repository.clear_history(user_id)
+    return {"status": "success"}
