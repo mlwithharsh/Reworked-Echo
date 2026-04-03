@@ -97,24 +97,35 @@ def process_text():
         policy_state = prepared.get("policy_state", {})
         memory_snapshot = prepared.get("memory_snapshot", {})
         
+        emotional_state = prepared.get("emotional_state", {})
+        policy_state = prepared.get("policy_state", {})
+        memory_snapshot = prepared.get("memory_snapshot", {})
+        
         return jsonify({
+            "type": "done",
+            "interaction_id": session_id or "id-123",
             "text": user_text,
             "response": response_text,
             "emotion": analysis.get("emotion", "neutral").upper(),
             "intent": analysis.get("intent", "unknown").upper(),
             "sentiment": analysis.get("sentiment", "neutral").upper(),
-            "timestamp": "Just now",
+            "item_timestamp": "Just now",
             "emotional_state": emotional_state.get("vector", {}),
             "emotional_alignment": emotional_state.get("alignment", "balanced").upper(),
             "policy": policy_state.get("policy", "supportive").upper(),
             "reward": completed.get("reward", 0),
             "reflection": completed.get("reflection", {}),
+            "profile": memory_snapshot.get("user_profile", {}),
             "memory": {
-                "user_profile": memory_snapshot.get("user_profile", {}),
                 "relevant_memories": memory_snapshot.get("relevant_memories", []),
                 "emotional_summary": memory_snapshot.get("emotional_summary", {}),
             },
-            "execution_log": prepared.get("execution_actions", []),
+            "metadata": {
+                "model_version": "2.0.0",
+                "personality": personality,
+                "generation_backend": "flask-legacy"
+            },
+            "system_label": "Adapting to your preferences"
         })
     except Exception as e:
         print(f"Error in /text/process: {e}")

@@ -102,30 +102,43 @@ export const AIProvider = ({ children }) => {
           // No personality_override — server manages profile automatically
         },
         (event) => {
-          if (event.type === 'delta') {
+          console.log('[AIContext] Received event:', event);
+          // Robustness: If event has a response but no type, treat it as 'done'
+          const eventType = event.type || (event.response ? 'done' : 'delta');
+          
+          if (eventType === 'delta') {
             setHistory((prev) =>
               prev.map((item) =>
                 item.interaction_id === draft.interaction_id
-                  ? { ...item, response: `${item.response}${event.content}` }
+                  ? { ...item, response: `${item.response}${event.content}`, pending: true }
                   : item
               )
             );
           }
-          if (event.type === 'done') {
+          if (eventType === 'done') {
+            console.log('[AIContext] Finalizing response:', event.response);
             finalPayload = {
-              interaction_id: event.interaction_id,
+              // CRITICAL: Keep the interaction_id from the draft so React keying remains stable
+              interaction_id: draft.interaction_id, 
               input_text: text,
               response: event.response,
-              metadata: event.metadata || {},
-              model_version: event.metadata?.model_version,
+              metadata: {
+                ...(event.metadata || {}),
+                backend_interaction_id: event.interaction_id // Store the real backend ID here
+              },
+              model_version: event.metadata?.model_version || event.version || '2.0.0',
+              pending: false, // Mark as finished
             };
             if (event.profile) setProfile(event.profile);
             if (event.system_label) setSystemLabel(event.system_label);
-            setHistory((prev) =>
-              prev.map((item) =>
+            
+            setHistory((prev) => {
+              const newHistory = prev.map((item) =>
                 item.interaction_id === draft.interaction_id ? finalPayload : item
-              )
-            );
+              );
+              console.log('[AIContext] Updated History:', newHistory);
+              return newHistory;
+            });
             setLastResponse(finalPayload);
           }
         }
