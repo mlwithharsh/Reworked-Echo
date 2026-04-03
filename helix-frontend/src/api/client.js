@@ -3,7 +3,7 @@ import axios from 'axios';
 const apiToken = import.meta.env.VITE_API_TOKEN || 'dev-token';
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000',
+  baseURL: import.meta.env.VITE_BACKEND_URL || 'https://reworked-echo.onrender.com',
   headers: {
     'Content-Type': 'application/json',
     'x-api-token': apiToken,
@@ -24,7 +24,7 @@ export const userAPI = {
 export const textAPI = {
   process: (payload) => api.post('/api/chat', payload),
   stream: async (payload, onEvent) => {
-    const response = await fetch(`${import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'}/api/chat/stream`, {
+    const response = await fetch(`${import.meta.env.VITE_BACKEND_URL || 'https://reworked-echo.onrender.com'}/api/chat/stream`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
