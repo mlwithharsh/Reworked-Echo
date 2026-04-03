@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from supabase import Client, create_client
 
+from werkzeug.security import generate_password_hash, check_password_hash
 from ..config import Settings
 from ..schemas import FeedbackRequest, InteractionRecord, PersonalityProfile
 
@@ -23,6 +24,49 @@ class SupabaseRepository:
         ]
         if self.connected:
             self.client = create_client(settings.supabase_url, settings.supabase_key)
+
+    def signup(self, email, password, name=""):
+        try:
+            if not self.client:
+                return None, "Database not connected"
+            
+            # Check if user exists
+            existing = self.client.table("users").select("id").eq("email", email).execute()
+            if existing.data:
+                return None, "Email already registered"
+            
+            user_id = str(uuid4())
+            hashed_pwd = generate_password_hash(password)
+            
+            payload = {
+                "id": user_id,
+                "email": email,
+                "password_hash": hashed_pwd,
+                "name": name,
+                "created_at": datetime.now(timezone.utc).isoformat()
+            }
+            
+            self.client.table("users").insert(payload).execute()
+            return user_id, None
+        except Exception as e:
+            return None, str(e)
+
+    def login(self, email, password):
+        try:
+            if not self.client:
+                return None, "Database not connected"
+                
+            result = self.client.table("users").select("*").eq("email", email).execute()
+            if not result.data:
+                return None, "Invalid email or password"
+            
+            user = result.data[0]
+            if not check_password_hash(user["password_hash"], password):
+                return None, "Invalid email or password"
+            
+            return user["id"], None
+        except Exception as e:
+            return None, str(e)
 
     def _default_profile(self, user_id: str) -> PersonalityProfile:
         return PersonalityProfile(user_id=user_id)

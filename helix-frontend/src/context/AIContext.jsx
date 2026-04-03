@@ -6,7 +6,7 @@ const AIContext = createContext();
 
 export const AIProvider = ({ children }) => {
   const [status, setStatus] = useState('offline');
-  const [userId] = useState('demo-user');
+  const [userId, setUserId] = useState(() => localStorage.getItem('helix_user_id') || 'guest-user');
   const [personality, setPersonality] = useState('helix');
   const [history, setHistory] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -51,12 +51,24 @@ export const AIProvider = ({ children }) => {
   }, [userId]);
 
   useEffect(() => {
+    // Sync userId from localStorage
+    const handleStorageChange = () => {
+      const id = localStorage.getItem('helix_user_id') || 'guest-user';
+      setUserId(id);
+    };
+    window.addEventListener('storage', handleStorageChange);
+    
     fetchStatus();
-    fetchProfile();
-    fetchHistory();
+    if (userId !== 'guest-user') {
+      fetchProfile();
+      fetchHistory();
+    }
     const interval = setInterval(fetchStatus, 30000);
-    return () => clearInterval(interval);
-  }, [fetchStatus, fetchHistory, fetchProfile]);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, [fetchStatus, fetchHistory, fetchProfile, userId]);
 
   useEffect(() => {
     const clear = async () => {
@@ -99,11 +111,8 @@ export const AIProvider = ({ children }) => {
           message: text,
           history: outboundHistory,
           personality,
-          // No personality_override — server manages profile automatically
         },
         (event) => {
-          console.log('[AIContext] Received event:', event);
-          // Robustness: If event has a response but no type, treat it as 'done'
           const eventType = event.type || (event.response ? 'done' : 'delta');
           
           if (eventType === 'delta') {
@@ -116,29 +125,22 @@ export const AIProvider = ({ children }) => {
             );
           }
           if (eventType === 'done') {
-            console.log('[AIContext] Finalizing response:', event.response);
             finalPayload = {
-              // CRITICAL: Keep the interaction_id from the draft so React keying remains stable
-              interaction_id: draft.interaction_id, 
+              interaction_id: event.interaction_id || draft.interaction_id, 
               input_text: text,
               response: event.response,
               metadata: {
                 ...(event.metadata || {}),
-                backend_interaction_id: event.interaction_id // Store the real backend ID here
+                backend_interaction_id: event.interaction_id
               },
-              model_version: event.metadata?.model_version || event.version || '2.0.0',
-              pending: false, // Mark as finished
+              model_version: event.metadata?.model_version || '2.0.0',
+              pending: false,
             };
             if (event.profile) setProfile(event.profile);
-            if (event.system_label) setSystemLabel(event.system_label);
             
-            setHistory((prev) => {
-              const newHistory = prev.map((item) =>
-                item.interaction_id === draft.interaction_id ? finalPayload : item
-              );
-              console.log('[AIContext] Updated History:', newHistory);
-              return newHistory;
-            });
+            setHistory((prev) => 
+               prev.map((item) => item.interaction_id === draft.interaction_id ? finalPayload : item)
+            );
             setLastResponse(finalPayload);
           }
         }

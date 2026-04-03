@@ -18,7 +18,8 @@ from Core_Brain.nlp_engine.nlp_engine import NLPEngine
 from Core_Brain.memory_manager import MemoryManager
 from Core_Brain.nlp_engine.personality_router import PersonalityRouter
 from Core_Brain.adaptive_core.orchestration import AdaptiveOrchestrator
-from Core_Brain.auth_manager import AuthManager
+from fullstack.services.repository import SupabaseRepository
+from fullstack.config import get_settings
 
 # Load environment variables BEFORE initializing components
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'helix-frontend', '.env'))
@@ -26,12 +27,13 @@ load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 app = Flask(__name__)
 CORS(app)
 
-# Initialize Core Brain
+# Initialize Core Brain & Repository
+settings = get_settings()
 nlp_engine = NLPEngine()
 memory_manager = MemoryManager()
 personality_router = PersonalityRouter()
 adaptive_orchestrator = AdaptiveOrchestrator(memory_manager)
-auth_manager = AuthManager()
+repository = SupabaseRepository(settings)
 
 @app.route('/', methods=['GET'])
 def root():
@@ -47,7 +49,7 @@ def signup():
     if not email or not password:
         return jsonify({"error": "Missing email or password"}), 400
         
-    user_id, error = auth_manager.signup(email, password, name)
+    user_id, error = repository.signup(email, password, name)
     if error:
         return jsonify({"error": error}), 400
     
@@ -62,7 +64,7 @@ def login():
     if not email or not password:
         return jsonify({"error": "Missing email or password"}), 400
         
-    user_id, error = auth_manager.login(email, password)
+    user_id, error = repository.login(email, password)
     if error:
         return jsonify({"error": error}), 401
     
@@ -118,6 +120,8 @@ def process_text():
             prepared.get("policy_state", {}),
             prepared.get("emotional_state", {}),
         )
+        
+        # Save to Local memory (for this session)
         memory_manager.add_memory(
             user_text,
             response_text,
@@ -126,9 +130,20 @@ def process_text():
             reward=completed.get("reward"),
             reflection=completed.get("reflection"),
         )
-        emotional_state = prepared.get("emotional_state", {})
-        policy_state = prepared.get("policy_state", {})
-        memory_snapshot = prepared.get("memory_snapshot", {})
+        
+        # PERSIST to Supabase interaction table
+        user_id = data.get('user_id') or "guest-user" 
+        interaction = repository.create_interaction(
+            user_id=user_id,
+            input_text=user_text,
+            response_text=response_text,
+            model_version="2.0.0",
+            metadata={
+                "personality": personality,
+                "analysis": analysis,
+                "reward": completed.get("reward")
+            }
+        )
         
         emotional_state = prepared.get("emotional_state", {})
         policy_state = prepared.get("policy_state", {})
@@ -136,7 +151,7 @@ def process_text():
         
         return jsonify({
             "type": "done",
-            "interaction_id": session_id or "id-123",
+            "interaction_id": interaction.id,
             "text": user_text,
             "response": response_text,
             "emotion": analysis.get("emotion", "neutral").upper(),
@@ -238,17 +253,34 @@ def api_user_clear(user_id):
 def api_feedback():
     if request.method == 'OPTIONS': return jsonify({"status": "ok"}), 200
     data = request.json
-    success = memory_manager.submit_feedback(
-        data.get("interaction_id"),
-        data.get("vote"),
-        data.get("tags", [])
-    )
-    if success:
+    from fullstack.schemas import FeedbackRequest
+    
+    try:
+        feedback_obj = FeedbackRequest(
+            interaction_id=data.get("interaction_id"),
+            user_id=data.get("user_id", "guest-user"),
+            vote=1 if data.get("vote") == 'up' else -1,
+            tags=data.get("tags", []),
+            notes=data.get("notes", "")
+        )
+        reward = 1.0 if feedback_obj.vote == 1 else -0.5
+        
+        # Save to DB
+        repository.add_feedback(feedback_obj, reward)
+        
+        # Also update local memory snapshot
+        memory_manager.submit_feedback(
+            feedback_obj.interaction_id,
+            data.get("vote"),
+            feedback_obj.tags
+        )
+        
         return jsonify({
             "status": "success",
             "updated_profile": memory_manager.get_memory_snapshot()
         })
-    else:
+    except Exception as e:
+        print(f"Feedback error: {e}")
         return jsonify({"error": "Failed to record feedback"}), 500
 
 if __name__ == '__main__':
