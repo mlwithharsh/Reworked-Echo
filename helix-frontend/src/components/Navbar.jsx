@@ -27,17 +27,21 @@ const Navbar = () => {
 
         {/* Desktop Nav */}
         <div className="hidden md:flex items-center space-x-8">
-          {navItems.map((item) => (
-            <a
-              key={item.path}
-              href={item.path === '/' ? '/' : `${item.path}.html`}
-              className={`nav-link flex items-center space-x-2 ${location.pathname === (item.path === '/' ? '/' : `${item.path}.html`) ? 'text-text-primary' : ''
-                }`}
-            >
-              <item.icon className="w-4 h-4" />
-              <span>{item.name}</span>
-            </a>
-          ))}
+          <a href="/" className={`nav-link flex items-center space-x-2 ${location.pathname === '/' ? 'text-text-primary' : ''}`}>
+            <Heart className="w-4 h-4" />
+            <span>Home</span>
+          </a>
+          <a href="/chat.html" className={`nav-link flex items-center space-x-2 ${location.pathname === '/chat.html' ? 'text-text-primary' : ''}`}>
+            <MessageSquare className="w-4 h-4" />
+            <span>Chat</span>
+          </a>
+          <a href="/about.html" className={`nav-link flex items-center space-x-2 ${location.pathname === '/about.html' ? 'text-text-primary' : ''}`}>
+            <Info className="w-4 h-4" />
+            <span>About</span>
+          </a>
+          
+          <div className="h-4 w-px bg-black/10 mx-2" /> {/* Divider */}
+
           {localStorage.getItem('helix_user_id') ? (
             <button 
               onClick={() => { localStorage.removeItem('helix_user_id'); window.location.href = '/'; }}
@@ -46,7 +50,7 @@ const Navbar = () => {
               Logout
             </button>
           ) : (
-            <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-6">
               <a href="/login.html" className="text-sm font-bold text-text-secondary hover:text-solace-purple transition-colors">
                 Login
               </a>

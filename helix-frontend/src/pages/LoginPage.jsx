@@ -98,12 +98,16 @@ const LoginPage = () => {
           </button>
         </form>
 
-        <div className="mt-8 text-center">
-          <p className="text-text-secondary">
-            Don't have an account?{' '}
-            <a href="/signup.html" className="text-solace-purple font-bold hover:underline">
-              Create one
-            </a>
+        <div className="mt-8 text-center pt-6 border-t border-black/5">
+          <p className="text-sm font-medium text-text-secondary">
+            NEW USER?{' '}
+            <motion.a 
+              whileHover={{ scale: 1.05 }}
+              href="/signup.html" 
+              className="text-solace-purple font-black hover:underline underline-offset-4"
+            >
+              CREATE AN ACCOUNT
+            </motion.a>
           </p>
         </div>
       </motion.div>
