@@ -47,7 +47,7 @@ def get_status():
 @app.route('/text/process', methods=['POST'])
 def process_text():
     data = request.json
-    user_text = data.get('text', '')
+    user_text = data.get('text') or data.get('message', '')
     personality = data.get('personality', 'Helix')
     session_id = data.get('session_id')
     
@@ -157,6 +157,38 @@ def get_memory_profile():
 def clear_memory():
     memory_manager.clear_memory()
     return jsonify({"status": "success"})
+
+# --- Compatibility Routes for /api prefix (Vercel Frontend) ---
+@app.route('/api/status', methods=['GET', 'OPTIONS'])
+def api_status():
+    if request.method == 'OPTIONS': return jsonify({"status": "ok"}), 200
+    return jsonify({
+        "status": "online", 
+        "version": "2.0.0", 
+        "adaptive_core": True,
+        "supabase_connected": False 
+    })
+
+@app.route('/api/chat/stream', methods=['POST', 'OPTIONS'])
+def api_chat_stream():
+    if request.method == 'OPTIONS': return jsonify({"status": "ok"}), 200
+    # Proxies to the main process_text logic but for /api path
+    return process_text()
+
+@app.route('/api/users/<user_id>/profile', methods=['GET', 'OPTIONS'])
+def api_user_profile(user_id):
+    if request.method == 'OPTIONS': return jsonify({"status": "ok"}), 200
+    return jsonify(memory_manager.get_memory_snapshot())
+
+@app.route('/api/users/<user_id>/history', methods=['GET', 'OPTIONS'])
+def api_user_history(user_id):
+    if request.method == 'OPTIONS': return jsonify({"status": "ok"}), 200
+    return get_history()
+
+@app.route('/api/users/<user_id>/clear', methods=['POST', 'OPTIONS'])
+def api_user_clear(user_id):
+    if request.method == 'OPTIONS': return jsonify({"status": "ok"}), 200
+    return clear_memory()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
