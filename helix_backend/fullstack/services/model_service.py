@@ -7,9 +7,6 @@ import logging
 from pathlib import Path
 from typing import AsyncIterator
 
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
 from helix_backend.Core_Brain.nlp_engine.nlp_engine import NLPEngine
 
 from ..config import Settings
@@ -23,7 +20,12 @@ logger = logging.getLogger(__name__)
 class AdaptiveInferenceService:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        try:
+            import torch
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        except ImportError:
+            self.device = "cpu"
+            
         self._tokenizer = None
         self._model = None
         self.cache = ResponseCache(settings.cache_ttl_seconds)
@@ -46,6 +48,9 @@ class AdaptiveInferenceService:
             
         if self._model is None:
             logger.info(f"[LocalModel] Loading {self.settings.model_name} into RAM (Lazy Load)...")
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+            import torch
+            
             self._tokenizer = AutoTokenizer.from_pretrained(self.settings.model_name)
             if self._tokenizer.pad_token is None:
                 self._tokenizer.pad_token = self._tokenizer.eos_token
