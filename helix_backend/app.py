@@ -16,15 +16,28 @@ if project_root not in sys.path:
     sys.path.append(project_root)
 
 # Import Helix Core Components
-from Core_Brain.nlp_engine.nlp_engine import NLPEngine
-from Core_Brain.memory_manager import MemoryManager
-from Core_Brain.nlp_engine.personality_router import PersonalityRouter
-from Core_Brain.adaptive_core.orchestration import AdaptiveOrchestrator
-from fullstack.services.repository import SupabaseRepository
-from fullstack.config import get_settings
-from helix_backend.utils.network_checker.checker import helper as network_checker
-from helix_backend.edge_model.engine import edge_engine
-from helix_backend.router.router import get_routing_decision
+# Core imports (using project-relative paths)
+try:
+    from Core_Brain.nlp_engine.nlp_engine import NLPEngine
+    from Core_Brain.memory_manager import MemoryManager
+    from Core_Brain.nlp_engine.personality_router import PersonalityRouter
+    from Core_Brain.adaptive_core.orchestration import AdaptiveOrchestrator
+    from fullstack.services.repository import SupabaseRepository
+    from fullstack.config import get_settings
+    from utils.network_checker.checker import helper as network_checker
+    from edge_model.engine import edge_engine
+    from router.router import get_routing_decision
+except ImportError:
+    # Fallback for different CWDs on Render
+    from helix_backend.Core_Brain.nlp_engine.nlp_engine import NLPEngine
+    from helix_backend.Core_Brain.memory_manager import MemoryManager
+    from helix_backend.Core_Brain.nlp_engine.personality_router import PersonalityRouter
+    from helix_backend.Core_Brain.adaptive_core.orchestration import AdaptiveOrchestrator
+    from helix_backend.fullstack.services.repository import SupabaseRepository
+    from helix_backend.fullstack.config import get_settings
+    from helix_backend.utils.network_checker.checker import helper as network_checker
+    from helix_backend.edge_model.engine import edge_engine
+    from helix_backend.router.router import get_routing_decision
 
 # Load Environment
 load_dotenv(os.path.join(project_root, 'helix-frontend', '.env'))
@@ -41,13 +54,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger("HELIX.API")
 
-# Initialize Singletons
-settings = get_settings()
-nlp_engine = NLPEngine()
-memory_manager = MemoryManager()
-personality_router = PersonalityRouter()
-adaptive_orchestrator = AdaptiveOrchestrator(memory_manager)
-repository = SupabaseRepository(settings)
+# Initialize Singletons with extreme caution
+try:
+    settings = get_settings()
+    nlp_engine = NLPEngine()
+    memory_manager = MemoryManager()
+    personality_router = PersonalityRouter()
+    adaptive_orchestrator = AdaptiveOrchestrator(memory_manager)
+    repository = SupabaseRepository(settings)
+except Exception as e:
+    logger.error(f"FATAL: Singleton initialization failed: {e}")
+    # Partial mock to prevent hard crashes
+    repository = None
+    nlp_engine = NLPEngine()
 
 # --- SECURITY & UTILS ---
 API_KEY = os.getenv("HELIX_API_KEY", "prod-helix-key-2024")
