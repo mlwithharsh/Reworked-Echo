@@ -125,7 +125,7 @@ export const AIProvider = ({ children }) => {
     };
   }, [fetchStatus, fetchHistory, fetchProfile, userId]);
 
-  const processText = async (text) => {
+  const processText = async (text, options = {}) => {
     setIsProcessing(true);
     const draft = {
       interaction_id: `pending-${Date.now()}`,
@@ -152,6 +152,8 @@ export const AIProvider = ({ children }) => {
         message: text,
         history: outboundHistory,
         personality,
+        privacy_mode: options.privacy_mode || false,
+        force_offline: options.force_offline || false
       });
 
       const event = res.data;
