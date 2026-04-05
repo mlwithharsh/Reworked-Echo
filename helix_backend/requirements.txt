@@ -1,5 +1,6 @@
 flask
 flask-cors
+psutil
 cryptography
 python-dotenv
 requests
@@ -13,8 +14,3 @@ postgrest>=0.16.11
 cachetools>=5.5.0
 python-multipart>=0.0.9
 numpy>=1.26.0
-torch>=2.2.0 --index-url https://download.pytorch.org/whl/cpu
-transformers>=4.44.0
-peft>=0.12.0
-trl>=1.0.0
-faiss-cpu>=1.8.0

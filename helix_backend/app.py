@@ -261,7 +261,10 @@ def chat_streaming():
 @app.route('/text/process', methods=['POST'])
 def legacy_routes():
     # Redirect to v1 version (keeping method/data)
-    target = f"/api/v1{request.path}"
+    # FIX: Ensure we don't double-prefix if request is already v1
+    if request.path.startswith("/api/v1/"): return f"Already v1", 200
+    
+    target = request.path.replace("/api/", "/api/v1/", 1)
     if request.path == "/text/process": target = "/api/v1/chat"
     return redirect(target, code=307)
 
