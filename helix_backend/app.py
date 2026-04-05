@@ -6,6 +6,7 @@ import time
 import json
 import logging
 import threading
+import psutil
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -91,13 +92,17 @@ def check_rate_limit(user_id):
 def get_status():
     """PRODUCTION v1: Status observability."""
     is_online = network_checker.is_online()
+    try:
+        ram_avail = int(psutil.virtual_memory().available / (1024*1024))
+    except:
+        ram_avail = 0
     return jsonify({
         "status": "online",
         "version": "1.0.0-beta",
         "provider": "HELIX-HYBRID",
         "network": "online" if is_online else "offline",
         "edge_engine": "warm" if edge_engine.is_loaded else "cold",
-        "ram_available_mb": int(psutil.virtual_memory().available / (1024*1024)),
+        "ram_available_mb": ram_avail,
         "timestamp": datetime.now().isoformat()
     })
 
@@ -187,7 +192,7 @@ def chat_blocking():
 
 @app.route('/api/v1/chat/stream', methods=['POST'])
 def chat_streaming():
-    """PRODUCTION v1: SSE Streaming Endpoint."""
+    """PRODUCTION v1: SSE Streaming Endpoint with JSON Fallback."""
     data = request.json
     user_id = data.get('user_id', 'guest')
     user_text = sanitize_input(data.get('message', ''))
@@ -199,8 +204,22 @@ def chat_streaming():
     privacy_mode = data.get('privacy_mode', False)
     force_offline = data.get('force_offline', False)
 
+    # SECURE FALLBACK: If client is not requesting event-stream, return full JSON
+    # This fixes SyntaxErrors on the Vercel frontend if it uses standard fetch()
+    accept_header = request.headers.get("Accept", "")
+    if "text/event-stream" not in accept_header:
+        logger.info(f"Stream called via standard Request: user={user_id}. Using JSON fallback.")
+        messages = [{"role": "user", "content": user_text}]
+        response_text = nlp_engine.smart_generate(
+            messages,
+            privacy_mode=privacy_mode,
+            force_offline=force_offline,
+            personality=personality
+        )
+        return jsonify({"response": response_text, "mode": "json_fallback"})
+
     def generate():
-        logger.info(f"Stream starting: user={user_id}")
+        logger.info(f"SSE Stream starting: user={user_id}")
         messages = [{"role": "user", "content": user_text}]
         
         for token in nlp_engine.smart_generate_stream(
