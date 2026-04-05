@@ -82,13 +82,23 @@ class NLPEngine:
             self.logger.info(f"ROUTING -> LOCAL (EDGE) STREAM [Tag={tag}]")
             success = False
             full_response = ""
-            for token in edge_engine.generate_stream(messages, max_tokens):
-                success = True
-                full_response += token
-                yield token
-            
-            if success:
-                self.metrics["edge_success"] += 1
+            try:
+                for token in edge_engine.generate_stream(messages, max_tokens):
+                    success = True
+                    full_response += token
+                    yield token
+            except Exception as e:
+                self.logger.error(f"EDGE primary stream error: {e}")
+
+            # If edge failed AND we have permission to use cloud (not privacy/offline)
+            if not success and not privacy_mode and not force_offline:
+                self.logger.warning("EDGE Stream failed/unavailable. Automatic Fallback to CLOUD.")
+                for token in self.call_groq_stream(messages, max_tokens, temperature):
+                    full_response += token
+                    yield token
+                
+            if full_response:
+                self.metrics["edge_success"] += 1 if success else 0
                 cache_manager.set(user_query, personality, full_response)
                 
         # --- CLOUD PATH ---

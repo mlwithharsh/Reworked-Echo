@@ -15,7 +15,9 @@ class EdgeEngine:
         
         # Paths
         self.edge_dir = os.path.dirname(os.path.abspath(__file__))
-        self.server_bin = os.path.join(self.edge_dir, "llama-server.exe")
+        # OS-Aware binary selection
+        binary_name = "llama-server.exe" if os.name == "nt" else "llama-server"
+        self.server_bin = os.path.join(self.edge_dir, binary_name)
         
         # Project base (one level up from edge_model/)
         _base = os.path.dirname(self.edge_dir)
@@ -108,8 +110,8 @@ class EdgeEngine:
 
     def generate_stream(self, messages: List[Dict[str, str]], max_tokens: int = 512, timeout: int = 15) -> Generator[str, None, None]:
         if not self.load_model():
-            yield "[Edge Error]: Engine sidecar failed to start."
-            return
+            self.logger.warning("EdgeEngine: Sidecar failed. No fallback tokens yielded.")
+            return # DON'T yield an error string, so NLPEngine can fallback
 
         try:
             self.last_used = time.time()
