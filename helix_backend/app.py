@@ -83,15 +83,15 @@ def check_rate_limit(user_id):
     API_SESSIONS[user_id] = user_data
     return True
 
-# --- API CONTRACTS ---
+# --- API v1 CONTRACTS ---
 
-@app.route('/api/status', methods=['GET'])
+@app.route('/api/v1/status', methods=['GET'])
 def get_status():
-    """STRICT CONTRACT: Status observability."""
+    """PRODUCTION v1: Status observability."""
     is_online = network_checker.is_online()
     return jsonify({
         "status": "online",
-        "version": "2.2.0-PROD",
+        "version": "1.0.0-beta",
         "provider": "HELIX-HYBRID",
         "network": "online" if is_online else "offline",
         "edge_engine": "warm" if edge_engine.is_loaded else "cold",
@@ -99,9 +99,9 @@ def get_status():
         "timestamp": datetime.now().isoformat()
     })
 
-@app.route('/api/metrics', methods=['GET'])
+@app.route('/api/v1/metrics', methods=['GET'])
 def get_metrics():
-    """PRODUCTION: Measurable performance metrics."""
+    """PRODUCTION v1: Measurable performance metrics."""
     if not validate_api_key():
         return jsonify({"error": "Unauthorized metrics access"}), 401
     return jsonify({
@@ -110,21 +110,21 @@ def get_metrics():
         "uptime_sec": int(time.time() - getattr(app, 'start_time', time.time()))
     })
 
-@app.route('/api/warmup', methods=['POST'])
+@app.route('/api/v1/warmup', methods=['POST'])
 def edge_warmup():
-    """LIFECYCLE: Manual activation of the Edge AI model."""
+    """LIFECYCLE v1: Manual activation of the Edge AI model."""
     success = edge_engine.warmup()
     return jsonify({"success": success, "status": "warm" if success else "failed"})
 
-@app.route('/api/unload', methods=['POST'])
+@app.route('/api/v1/unload', methods=['POST'])
 def edge_unload():
-    """LIFECYCLE: Manual release of system RAM."""
+    """LIFECYCLE v1: Manual release of system RAM."""
     edge_engine.unload_model()
     return jsonify({"success": True, "status": "cold"})
 
-@app.route('/api/predict', methods=['POST'])
+@app.route('/api/v1/predict', methods=['POST'])
 def predict_route():
-    """PREEMPTIVE: Predict route and warm up engine while user is typing."""
+    """PREEMPTIVE v1: Predict route and warm up engine while user is typing."""
     data = request.json
     partial_text = data.get('text', '')
     if not partial_text: return jsonify({"status": "idle"})
@@ -139,9 +139,9 @@ def predict_route():
     
     return jsonify({"prediction": "cloud", "action": "none"})
 
-@app.route('/api/chat', methods=['POST'])
+@app.route('/api/v1/chat', methods=['POST'])
 def chat_blocking():
-    """STRICT CONTRACT: Standard chat endpoint."""
+    """PRODUCTION v1: Standard chat endpoint."""
     data = request.json
     user_id = data.get('user_id', 'guest')
     user_text = sanitize_input(data.get('message', '') or data.get('text', ''))
@@ -162,7 +162,7 @@ def chat_blocking():
     
     # Process through Hybrid Engine
     analysis = nlp_engine.get_analysis(user_text)
-    messages = [{"role": "user", "content": user_text}] # Simplified for contract
+    messages = [{"role": "user", "content": user_text}] # Simplified
     
     response_text = nlp_engine.smart_generate(
         messages, 
@@ -183,9 +183,9 @@ def chat_blocking():
         }
     })
 
-@app.route('/api/chat/stream', methods=['POST'])
+@app.route('/api/v1/chat/stream', methods=['POST'])
 def chat_streaming():
-    """STRICT CONTRACT: SSE Streaming Endpoint."""
+    """PRODUCTION v1: SSE Streaming Endpoint."""
     data = request.json
     user_id = data.get('user_id', 'guest')
     user_text = sanitize_input(data.get('message', ''))
@@ -214,10 +214,16 @@ def chat_streaming():
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
-# --- LEGACY COMPATIBILITY ---
+# --- LEGACY COMPATIBILITY (REDIRECTS) ---
+@app.route('/api/chat', methods=['POST'])
+@app.route('/api/chat/stream', methods=['POST'])
+@app.route('/api/status', methods=['GET'])
 @app.route('/text/process', methods=['POST'])
-def legacy_process():
-    return chat_blocking()
+def legacy_routes():
+    # Redirect to v1 version (keeping method/data)
+    target = f"/api/v1{request.path}"
+    if request.path == "/text/process": target = "/api/v1/chat"
+    return redirect(target, code=307)
 
 if __name__ == '__main__':
     # Production server usually run via Gunicorn, but this allows direct dev testing

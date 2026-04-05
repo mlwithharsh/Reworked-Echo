@@ -21,7 +21,7 @@ class EdgeEngine:
         
         # Project base (one level up from edge_model/)
         _base = os.path.dirname(self.edge_dir)
-        default_model = os.path.join(_base, "models", "qwen2-0_5b-instruct-q4_k_m.gguf")
+        default_model = os.path.join(_base, "models", "qwen2-05b-v1.gguf")
         self.model_path = model_path or os.getenv("LOCAL_MODEL_PATH", default_model)
         
         # State
