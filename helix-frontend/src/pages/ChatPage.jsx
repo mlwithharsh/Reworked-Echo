@@ -12,11 +12,14 @@ import {
   Loader2,
   AlertTriangle,
   Wifi,
-  WifiOff
+  WifiOff,
+  Shield
 } from 'lucide-react';
 
 const ChatPage = () => {
   const [inputText, setInputText] = useState('');
+  const [privacyMode, setPrivacyMode] = useState(false);
+  const [forceOffline, setForceOffline] = useState(false);
   const { isProcessing, processText, history, profile, submitFeedback, systemLabel, personality, status, isColdStart } = useAI();
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
@@ -36,7 +39,7 @@ const ChatPage = () => {
     const text = inputText;
     setInputText('');
     try {
-      await processText(text);
+      await processText(text, { privacy_mode: privacyMode, force_offline: forceOffline });
     } catch (err) {
       console.error('Failed to send text', err);
     }
@@ -112,6 +115,27 @@ const ChatPage = () => {
         </div>
         
         <div className="flex items-center space-x-3">
+          {/* Gateway Status */}
+          <div className="hidden sm:flex items-center space-x-1.5 px-3 py-1.5 rounded-full bg-white/50 border border-black/5 text-[9px] font-bold uppercase tracking-widest text-text-muted">
+             <span>{forceOffline || status !== 'online' ? 'Local Edge' : 'Hybrid Cloud'}</span>
+          </div>
+
+          <button 
+             onClick={() => setPrivacyMode(!privacyMode)}
+             className={`p-2 rounded-xl border transition-all duration-300 ${privacyMode ? 'bg-[#6d7b68] text-white border-transparent shadow-md' : 'bg-white/70 text-text-muted border-black/5'}`}
+             title="Privacy Mode"
+          >
+             <Shield className="w-4 h-4" />
+          </button>
+          
+          <button 
+             onClick={() => setForceOffline(!forceOffline)}
+             className={`p-2 rounded-xl border transition-all duration-300 ${forceOffline ? 'bg-amber-600 text-white border-transparent shadow-md' : 'bg-white/70 text-text-muted border-black/5'}`}
+             title="Force Offline"
+          >
+             <WifiOff className="w-4 h-4" />
+          </button>
+
           <PersonalitySelector />
         </div>
       </header>

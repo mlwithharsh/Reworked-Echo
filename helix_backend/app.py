@@ -20,6 +20,7 @@ from Core_Brain.nlp_engine.personality_router import PersonalityRouter
 from Core_Brain.adaptive_core.orchestration import AdaptiveOrchestrator
 from fullstack.services.repository import SupabaseRepository
 from fullstack.config import get_settings
+from helix_backend.utils.network_checker.checker import helper as network_checker
 
 # Load environment variables BEFORE initializing components
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'helix-frontend', '.env'))
@@ -97,6 +98,11 @@ def process_text():
         # Get analysis once
         analysis = nlp_engine.get_analysis(user_text)
         prepared = adaptive_orchestrator.prepare(user_text, analysis)
+        
+        # Inject Privacy Mode and Force Offline settings into prepared context
+        # These will be passed to the personality respondents
+        prepared["privacy_mode"] = data.get("privacy_mode", False)
+        prepared["force_offline"] = data.get("force_offline", False)
         
         # Get response using router (passing the pre-computed analysis)
         response_text = personality_router.get_response(
@@ -231,7 +237,16 @@ def api_status():
         "status": "online", 
         "version": "2.0.0", 
         "adaptive_core": True,
-        "supabase_connected": False 
+        "supabase_connected": False,
+        "device_offline": not network_checker.is_online(),
+        "edge_ready": True
+    })
+
+@app.route('/api/mode', methods=['GET'])
+def get_mode():
+    return jsonify({
+        "mode": "online" if network_checker.is_online() else "offline",
+        "current_gateway": "cloud" if network_checker.is_online() else "local"
     })
 
 @app.route('/api/chat/stream', methods=['POST', 'OPTIONS'])

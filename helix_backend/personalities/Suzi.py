@@ -93,7 +93,13 @@ class Suzi(BasePersonality):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_input}
         ]
-        response = self.nlp.call_groq_model(messages, max_tokens=200, temperature=0.92)
+        response = self.nlp.smart_generate(
+            messages, 
+            max_tokens=200, 
+            temperature=0.92,
+            privacy_mode=adaptive_context.get("privacy_mode", False),
+            force_offline=adaptive_context.get("force_offline", False)
+        )
 
         if not response or response.startswith("[Groq Error]"):
             response = random.choice([

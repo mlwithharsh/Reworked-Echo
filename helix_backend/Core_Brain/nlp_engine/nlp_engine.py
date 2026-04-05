@@ -7,6 +7,8 @@ from functools import lru_cache
 from pathlib import Path
 
 import requests
+from helix_backend.router.router import get_routing_decision
+from helix_backend.edge_model.engine import generate_local
 
 try:
     from dotenv import load_dotenv
@@ -27,6 +29,30 @@ class NLPEngine:
 
         if not self.api_key:
             self.logger.warning("GROQ_API_KEY not found — Groq calls will fail and fall back to local model.")
+
+    def smart_generate(self, messages, max_tokens=200, temperature=0.7, privacy_mode=False, force_offline=False):
+        """
+        Intelligently routes and generates response using either local or cloud model.
+        """
+        # Get the user query (last message)
+        user_query = messages[-1].get("content", "")
+        
+        # 1. Ask the Router
+        decision = get_routing_decision(user_query, privacy_mode=privacy_mode, force_offline=force_offline)
+        
+        if decision == "local":
+            self.logger.info("Executing LOCAL EDGE AI generation...")
+            return generate_local(messages, max_tokens=max_tokens, temperature=temperature)
+        else:
+            self.logger.info("Executing CLOUD API generation...")
+            response = self.call_groq_model(messages, max_tokens=max_tokens, temperature=temperature)
+            
+            # If cloud fails, fallback to local as absolute safety
+            if response.startswith("[Groq Error]"):
+                self.logger.warning("Cloud failed, falling back to local model...")
+                return generate_local(messages, max_tokens=max_tokens, temperature=temperature)
+            
+            return response
 
     def call_groq_model(self, messages, max_tokens=200, temperature=0.7):
         if not self.api_key:
