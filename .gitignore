@@ -21,3 +21,12 @@ logs
 .vscode/
 .idea/
 .DS_Store
+
+# AI Models & Native Binaries (HELIX Hybrid)
+helix_backend/models/
+helix_backend/edge_model/*.exe
+helix_backend/edge_model/*.dll
+helix_backend/edge_model/*.zip
+helix_backend/tests/*.md
+/models/
+*.gguf

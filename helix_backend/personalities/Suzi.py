@@ -98,7 +98,8 @@ class Suzi(BasePersonality):
             max_tokens=200, 
             temperature=0.92,
             privacy_mode=adaptive_context.get("privacy_mode", False),
-            force_offline=adaptive_context.get("force_offline", False)
+            force_offline=adaptive_context.get("force_offline", False),
+            personality=self.name
         )
 
         if not response or response.startswith("[Groq Error]"):

@@ -1,116 +1,168 @@
 import os
 import logging
-from typing import List, Dict, Optional
-
-# --- Model Selection Config ---
-# We'll use optimum + onnxruntime for Windows/CPU high-compatibility
-try:
-    from optimum.onnxruntime import ORTModelForCausalLM
-    from transformers import AutoTokenizer, pipeline
-    HAS_OPTIMUM = True
-except ImportError as e:
-    logging.getLogger(__name__).warning(f"Optimum ONNX not available: {e}")
-    HAS_OPTIMUM = False
-except Exception as e:
-    logging.getLogger(__name__).warning(f"Unexpected error importing Optimum: {e}")
-    HAS_OPTIMUM = False
-
-try:
-    from llama_cpp import Llama
-    HAS_LLAMA_CPP = True
-except ImportError:
-    HAS_LLAMA_CPP = False
+import time
+import psutil
+import subprocess
+import requests
+import json
+import threading
+from typing import List, Dict, Optional, Generator
 
 class EdgeEngine:
-    def __init__(self):
-        self.logger = logging.getLogger(__name__)
-        # Using a very small, high-performance model for CPU (Qwen2 0.5B)
-        # Xenova's version is pre-optimized for ONNX/CPU
-        self.model_id = os.getenv("LOCAL_MODEL_ID", "Xenova/Qwen2-0.5B-Instruct")
-        self.llm = None
-        self.tokenizer = None
+    """Production Edge Engine using llama-server.exe sidecar for robustness."""
+    def __init__(self, model_path: str = None):
+        self.logger = logging.getLogger("HELIX.EdgeEngine")
+        
+        # Paths
+        self.edge_dir = os.path.dirname(os.path.abspath(__file__))
+        self.server_bin = os.path.join(self.edge_dir, "llama-server.exe")
+        
+        # Project base (one level up from edge_model/)
+        _base = os.path.dirname(self.edge_dir)
+        default_model = os.path.join(_base, "models", "qwen2-0_5b-instruct-q4_k_m.gguf")
+        self.model_path = model_path or os.getenv("LOCAL_MODEL_PATH", default_model)
+        
+        # State
+        self.process: Optional[subprocess.Popen] = None
+        self.port = 8081 # Use 8081 for internal sidecar
         self.is_loaded = False
-        self.engine_type = None # 'onnx' or 'gguf'
+        self.last_used = 0
+        self.idle_timeout = 300 
+        self._lock = threading.Lock()
+        
+        # Lifecycle monitor
+        threading.Thread(target=self._idle_monitor, daemon=True).start()
 
-    def load_model(self):
-        if self.is_loaded:
+    def _idle_monitor(self):
+        while True:
+            time.sleep(30)
+            if self.is_loaded and (time.time() - self.last_used > self.idle_timeout):
+                with self._lock:
+                    self.logger.info("Lifecycle: Idle timeout. Unloading sidecar...")
+                    self.unload_model()
+
+    def unload_model(self):
+        if self.process:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=5)
+            except:
+                self.process.kill()
+            self.process = None
+        self.is_loaded = False
+        self.logger.info("Lifecycle: llama-server sidecar terminated.")
+
+    def warmup(self) -> bool:
+        with self._lock:
+            return self.load_model()
+
+    def load_model(self) -> bool:
+        if self.is_loaded and self.process and self.process.poll() is None:
+            self.last_used = time.time()
             return True
 
-        # --- OPTION 1: ONNX Runtime (Optimum) ---
-        if HAS_OPTIMUM:
-            try:
-                self.logger.info(f"Loading Edge AI via ONNX Runtime: {self.model_id}...")
-                self.tokenizer = AutoTokenizer.from_pretrained(self.model_id)
-                self.llm = ORTModelForCausalLM.from_pretrained(
-                    self.model_id,
-                    provider="CPUExecutionProvider",
-                    use_cache=True,
-                    use_io_binding=True
-                )
-                self.engine_type = 'onnx'
-                self.is_loaded = True
-                return True
-            except Exception as e:
-                self.logger.warning(f"ONNX loading failed: {e}. Trying GGUF...")
-
-        # --- OPTION 2: Llama.cpp (GGUF) ---
-        if HAS_LLAMA_CPP:
-            model_path = os.getenv("LOCAL_MODEL_PATH", "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf")
-            if os.path.exists(model_path):
-                try:
-                    self.logger.info(f"Loading Edge AI via GGUF: {model_path}...")
-                    self.llm = Llama(model_path=model_path, n_ctx=2048, n_threads=4, verbose=False)
-                    self.engine_type = 'gguf'
-                    self.is_loaded = True
-                    return True
-                except Exception as e:
-                    self.logger.error(f"GGUF loading failed: {e}")
-            else:
-                self.logger.warning(f"GGUF model not found at {model_path}")
-
-        self.logger.error("No compatible local AI engine (ONNX/GGUF) found or installed.")
-        return False
-
-    def generate(self, messages: List[Dict[str, str]], max_tokens: int = 150, temperature: float = 0.7) -> str:
-        if not self.load_model():
-            return "[Edge AI Error]: No local inference engine available (Installation required)."
+        if not os.path.exists(self.server_bin) or not os.path.exists(self.model_path):
+            self.logger.error(f"Bin/Model missing: {self.server_bin} OR {self.model_path}")
+            return False
 
         try:
-            if self.engine_type == 'onnx':
-                # ONNX Generation
-                prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-                inputs = self.tokenizer(prompt, return_tensors="pt")
-                
-                output = self.llm.generate(
-                    **inputs,
-                    max_new_tokens=max_tokens,
-                    temperature=temperature,
-                    do_sample=True,
-                    top_k=50,
-                    top_p=0.95
-                )
-                
-                # Strip the prompt from the response
-                response = self.tokenizer.decode(output[0], skip_special_tokens=True)
-                if prompt in response:
-                    response = response.replace(prompt, "").strip()
-                return response
-
-            elif self.engine_type == 'gguf':
-                # GGUF Generation (Legacy path)
-                prompt = ""
-                for msg in messages:
-                    prompt += f"<|{msg['role']}|>\n{msg['content']}</s>\n"
-                prompt += "<|assistant|>\n"
-                
-                output = self.llm(prompt, max_tokens=max_tokens, temperature=temperature, stop=["</s>"], echo=False)
-                return output['choices'][0]['text'].strip()
-
+            self.logger.info(f"Lifecycle: Starting llama-server sidecar on port {self.port}...")
+            # Optimized for CPU usage on 8GB machines
+            cmd = [
+                self.server_bin,
+                "--model", self.model_path,
+                "--port", str(self.port),
+                "--ctx-size", "2048",
+                "--threads", str(min(4, os.cpu_count() or 4)),
+                "--parallel", "1",
+                "--n-gpu-layers", "0" # CPU Only
+            ]
+            
+            # Start process quietly
+            self.process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                cwd=self.edge_dir
+            )
+            
+            # Wait for server to be ready
+            max_wait = 30
+            for i in range(max_wait):
+                try:
+                    res = requests.get(f"http://localhost:{self.port}/health", timeout=1)
+                    if res.status_code == 200:
+                        self.is_loaded = True
+                        self.last_used = time.time()
+                        self.logger.info("Lifecycle: Sidecar READY.")
+                        return True
+                except:
+                    pass
+                time.sleep(1)
+            
+            self.logger.error("Lifecycle: Sidecar failed to start within timeout.")
+            return False
         except Exception as e:
-            self.logger.error(f"Inference error: {e}")
-            return f"[Edge AI Error]: Generation failed. {e}"
+            self.logger.error(f"Lifecycle: Startup failure. {e}")
+            return False
 
-# Singleton instance
+    def generate_stream(self, messages: List[Dict[str, str]], max_tokens: int = 512, timeout: int = 15) -> Generator[str, None, None]:
+        if not self.load_model():
+            yield "[Edge Error]: Engine sidecar failed to start."
+            return
+
+        try:
+            self.last_used = time.time()
+            prompt = self._format_prompt(messages)
+            
+            # Call llama-server OAI compatible endpoint
+            payload = {
+                "prompt": prompt,
+                "n_predict": max_tokens,
+                "stream": True,
+                "stop": ["<|im_start|>", "<|im_end|>", "</s>"]
+            }
+            
+            response = requests.post(
+                f"http://localhost:{self.port}/completion",
+                json=payload,
+                stream=True,
+                timeout=timeout
+            )
+            
+            for line in response.iter_lines():
+                if line:
+                    chunk = line.decode('utf-8')
+                    if chunk.startswith("data: "):
+                        data = json.loads(chunk[6:])
+                        token = data.get("content", "")
+                        if token:
+                            yield token
+            
+            self.last_used = time.time()
+        except Exception as e:
+            self.logger.error(f"Edge Streaming Error: {e}")
+            yield f"\n[Edge Error]: {e}"
+
+    def generate(self, messages: List[Dict[str, str]], max_tokens: int = 512, timeout: int = 15) -> str:
+        full = ""
+        for t in self.generate_stream(messages, max_tokens, timeout):
+            full += t
+        return full
+
+    def _format_prompt(self, messages: List[Dict[str, str]]) -> str:
+        formatted = ""
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if role == "system":
+                formatted += f"<|im_start|>system\n{content}<|im_end|>\n"
+            elif role == "user":
+                formatted += f"<|im_start|>user\n{content}<|im_end|>\n"
+            elif role == "assistant":
+                formatted += f"<|im_start|>assistant\n{content}<|im_end|>\n"
+        formatted += "<|im_start|>assistant\n"
+        return formatted
+
+# Singleton
 edge_engine = EdgeEngine()
-def generate_local(messages, max_tokens=150, temperature=0.7):
-    return edge_engine.generate(messages, max_tokens, temperature)

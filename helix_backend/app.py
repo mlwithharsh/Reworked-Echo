@@ -1,19 +1,19 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response, stream_with_context
 from flask_cors import CORS
 import os
 import sys
+import time
+import json
+import logging
+from datetime import datetime
 from dotenv import load_dotenv
 
-# Add project root and helix_backend to sys.path
+# Path setup for internal modules
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-backend_root = os.path.dirname(os.path.abspath(__file__))
-
 if project_root not in sys.path:
     sys.path.append(project_root)
-if backend_root not in sys.path:
-    sys.path.append(backend_root)
 
-# Import components
+# Import Helix Core Components
 from Core_Brain.nlp_engine.nlp_engine import NLPEngine
 from Core_Brain.memory_manager import MemoryManager
 from Core_Brain.nlp_engine.personality_router import PersonalityRouter
@@ -21,14 +21,24 @@ from Core_Brain.adaptive_core.orchestration import AdaptiveOrchestrator
 from fullstack.services.repository import SupabaseRepository
 from fullstack.config import get_settings
 from helix_backend.utils.network_checker.checker import helper as network_checker
+from helix_backend.edge_model.engine import edge_engine
 
-# Load environment variables BEFORE initializing components
-load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'helix-frontend', '.env'))
+# Load Environment
+load_dotenv(os.path.join(project_root, 'helix-frontend', '.env'))
 
+# --- HELIX PRODUCTION APP ---
 app = Flask(__name__)
+app.start_time = time.time()
 CORS(app)
 
-# Initialize Core Brain & Repository
+# Logging configuration
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
+)
+logger = logging.getLogger("HELIX.API")
+
+# Initialize Singletons
 settings = get_settings()
 nlp_engine = NLPEngine()
 memory_manager = MemoryManager()
@@ -36,275 +46,179 @@ personality_router = PersonalityRouter()
 adaptive_orchestrator = AdaptiveOrchestrator(memory_manager)
 repository = SupabaseRepository(settings)
 
-@app.route('/', methods=['GET'])
-def root():
-    return jsonify({"message": "HELIX V1 Backend is active", "status": "online"})
+# --- SECURITY & UTILS ---
+API_KEY = os.getenv("HELIX_API_KEY", "prod-helix-key-2024")
+API_SESSIONS = {} # Rate tracking
+MAX_CONTENT_LENGTH = 100 * 1024 # 100KB limit per request
 
-@app.route('/api/auth/signup', methods=['POST'])
-def signup():
-    data = request.json
-    email = data.get('email')
-    password = data.get('password')
-    name = data.get('name', '')
-    
-    if not email or not password:
-        return jsonify({"error": "Missing email or password"}), 400
-        
-    user_id, error = repository.signup(email, password, name)
-    if error:
-        return jsonify({"error": error}), 400
-    
-    return jsonify({"user_id": user_id, "message": "Signup successful"})
+def sanitize_input(text: str) -> str:
+    """Production input sanitization."""
+    if not text: return ""
+    # Remove potentially harmful control characters and trim
+    return "".join(c for c in text if c.isprintable()).strip()[:5000]
 
-@app.route('/api/auth/login', methods=['POST'])
-def login():
-    data = request.json
-    email = data.get('email')
-    password = data.get('password')
-    
-    if not email or not password:
-        return jsonify({"error": "Missing email or password"}), 400
-        
-    user_id, error = repository.login(email, password)
-    if error:
-        return jsonify({"error": error}), 401
-    
-    return jsonify({"user_id": user_id, "message": "Login successful"})
+@app.before_request
+def limit_payload_size():
+    """Security: Enforce payload size limits."""
+    if request.content_length and request.content_length > MAX_CONTENT_LENGTH:
+        return jsonify({"error": "Payload too large"}), 413
 
-@app.errorhandler(404)
-def not_found(error):
-    print(f"404 error: {request.path} [{request.method}]")
-    return jsonify({"error": "Endpoint not found", "path": request.path}), 404
+def validate_api_key():
+    key = request.headers.get("X-API-Key")
+    if key != API_KEY:
+        return False
+    return True
 
-@app.route('/core/status', methods=['GET'])
+def check_rate_limit(user_id):
+    now = time.time()
+    user_data = API_SESSIONS.get(user_id, {"last": 0, "count": 0})
+    if now - user_data["last"] < 1: # 1 req/sec limit
+        if user_data["count"] > 3: # allow burst of 3
+            return False
+        user_data["count"] += 1
+    else:
+        user_data["count"] = 1
+    
+    user_data["last"] = now
+    API_SESSIONS[user_id] = user_data
+    return True
+
+# --- API CONTRACTS ---
+
+@app.route('/api/status', methods=['GET'])
 def get_status():
-    return jsonify({"status": "online", "version": "2.0.0", "adaptive_core": True})
+    """STRICT CONTRACT: Status observability."""
+    is_online = network_checker.is_online()
+    return jsonify({
+        "status": "online",
+        "version": "2.2.0-PROD",
+        "provider": "HELIX-HYBRID",
+        "network": "online" if is_online else "offline",
+        "edge_engine": "warm" if edge_engine.is_loaded else "cold",
+        "ram_available_mb": int(psutil.virtual_memory().available / (1024*1024)),
+        "timestamp": datetime.now().isoformat()
+    })
 
-@app.route('/text/process', methods=['POST'])
-def process_text():
+@app.route('/api/metrics', methods=['GET'])
+def get_metrics():
+    """PRODUCTION: Measurable performance metrics."""
+    if not validate_api_key():
+        return jsonify({"error": "Unauthorized metrics access"}), 401
+    return jsonify({
+        "helix_engine_metrics": nlp_engine.metrics,
+        "system_ram_mb": int(psutil.virtual_memory().available / (1024*1024)),
+        "uptime_sec": int(time.time() - getattr(app, 'start_time', time.time()))
+    })
+
+@app.route('/api/warmup', methods=['POST'])
+def edge_warmup():
+    """LIFECYCLE: Manual activation of the Edge AI model."""
+    success = edge_engine.warmup()
+    return jsonify({"success": success, "status": "warm" if success else "failed"})
+
+@app.route('/api/unload', methods=['POST'])
+def edge_unload():
+    """LIFECYCLE: Manual release of system RAM."""
+    edge_engine.unload_model()
+    return jsonify({"success": True, "status": "cold"})
+
+@app.route('/api/predict', methods=['POST'])
+def predict_route():
+    """PREEMPTIVE: Predict route and warm up engine while user is typing."""
     data = request.json
-    user_text = data.get('text') or data.get('message', '')
-    personality = data.get('personality', 'Helix')
-    session_id = data.get('session_id')
+    partial_text = data.get('text', '')
+    if not partial_text: return jsonify({"status": "idle"})
+    
+    routing_data = get_routing_decision(partial_text)
+    route = routing_data["route"]
+    
+    if route == "edge":
+        # Background warmup
+        threading.Thread(target=edge_engine.warmup).start()
+        return jsonify({"prediction": "edge", "action": "warming_up"})
+    
+    return jsonify({"prediction": "cloud", "action": "none"})
+
+@app.route('/api/chat', methods=['POST'])
+def chat_blocking():
+    """STRICT CONTRACT: Standard chat endpoint."""
+    data = request.json
+    user_id = data.get('user_id', 'guest')
+    user_text = sanitize_input(data.get('message', '') or data.get('text', ''))
     
     if not user_text:
-        return jsonify({"error": "No text provided"}), 400
+        return jsonify({"error": "Message content required"}), 400
+        
+    if not check_rate_limit(user_id):
+        return jsonify({"error": "Rate limit exceeded"}), 429
+
+    logger.info(f"Chat request starting: user={user_id}")
+    start_time = time.time()
     
-    try:
-        # Set personality - Normalize to lowercase for the router
-        target_personality = personality.lower()
-        personality_router.set_personality(target_personality)
-        
-        # Get analysis once
-        analysis = nlp_engine.get_analysis(user_text)
-        prepared = adaptive_orchestrator.prepare(user_text, analysis)
-        
-        # Inject Privacy Mode and Force Offline settings into prepared context
-        # These will be passed to the personality respondents
-        prepared["privacy_mode"] = data.get("privacy_mode", False)
-        prepared["force_offline"] = data.get("force_offline", False)
-        
-        # Get response using router (passing the pre-computed analysis)
-        response_text = personality_router.get_response(
-            user_text,
-            memory_manager,
-            analysis,
-            prepared,
-        )
-        if not response_text or str(response_text).startswith("[Groq Error]"):
-            response_text = nlp_engine.build_fallback_response(
-                user_text,
-                analysis=analysis,
-                adaptive_context=prepared,
-                personality_name=personality,
-            )
-
-        completed = adaptive_orchestrator.complete(
-            user_text,
-            analysis,
-            response_text,
-            prepared.get("policy_state", {}),
-            prepared.get("emotional_state", {}),
-        )
-        
-        # Save to Local memory (for this session)
-        memory_manager.add_memory(
-            user_text,
-            response_text,
-            session_id=session_id,
-            analysis=analysis,
-            reward=completed.get("reward"),
-            reflection=completed.get("reflection"),
-        )
-        
-        # PERSIST to Supabase interaction table
-        user_id = data.get('user_id') or "guest-user" 
-        interaction_id = None
-        try:
-            interaction = repository.create_interaction(
-                user_id=user_id,
-                input_text=user_text,
-                response_text=response_text,
-                model_version="2.0.0",
-                metadata={
-                    "personality": personality,
-                    "analysis": analysis,
-                    "reward": completed.get("reward")
-                }
-            )
-            interaction_id = interaction.id if interaction else f"local-{session_id or 'none'}"
-        except Exception as db_err:
-            print(f"DB persistence error (non-fatal): {db_err}")
-            interaction_id = f"local-{session_id or 'none'}"
-        
-        emotional_state = prepared.get("emotional_state", {})
-        policy_state = prepared.get("policy_state", {})
-        memory_snapshot = prepared.get("memory_snapshot", {})
-        
-        return jsonify({
-            "type": "done",
-            "interaction_id": interaction_id,
-            "text": user_text,
-            "response": response_text,
-            "emotion": analysis.get("emotion", "neutral").upper(),
-            "intent": analysis.get("intent", "unknown").upper(),
-            "sentiment": analysis.get("sentiment", "neutral").upper(),
-            "item_timestamp": "Just now",
-            "emotional_state": emotional_state.get("vector", {}),
-            "emotional_alignment": emotional_state.get("alignment", "balanced").upper(),
-            "policy": policy_state.get("policy", "supportive").upper(),
-            "reward": completed.get("reward", 0),
-            "reflection": completed.get("reflection", {}),
-            "profile": memory_snapshot.get("user_profile", {}),
-            "memory": {
-                "relevant_memories": memory_snapshot.get("relevant_memories", []),
-                "emotional_summary": memory_snapshot.get("emotional_summary", {}),
-            },
-            "metadata": {
-                "model_version": "2.0.0",
-                "personality": personality,
-                "generation_backend": "flask-legacy"
-            },
-            "system_label": "Adapting to your preferences"
-        })
-    except Exception as e:
-        print(f"Error in /text/process: {e}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/memory/history', methods=['GET'])
-def get_history():
-    # Convert encrypted memory to text for frontend
-    history_text = memory_manager.get_context_text()
-    # Simple parsing back to list for frontend
-    history_list = []
-    if history_text:
-        parts = history_text.split('\nUser: ')
-        for part in parts:
-            if not part: continue
-            # Handle first part differently
-            if not part.startswith('User: '):
-                part = 'User: ' + part
-            
-            try:
-                u_part, e_part = part.split('\nHelix: ')
-                history_list.append({
-                    "input_text": u_part.replace('User: ', ''),
-                    "response": e_part,
-                    "timestamp": "Recent",
-                    "emotion": "ADAPTIVE",
-                    "intent": "MEMORY",
-                    "sentiment": "STORED",
-                })
-            except:
-                continue
-                
-    return jsonify({"history": history_list})
-
-@app.route('/memory/profile', methods=['GET'])
-def get_memory_profile():
-    return jsonify(memory_manager.get_memory_snapshot())
-
-@app.route('/memory/clear', methods=['POST'])
-def clear_memory():
-    memory_manager.clear_memory()
-    return jsonify({"status": "success"})
-
-# --- Compatibility Routes for /api prefix (Vercel Frontend) ---
-@app.route('/api/status', methods=['GET', 'OPTIONS'])
-def api_status():
-    if request.method == 'OPTIONS': return jsonify({"status": "ok"}), 200
+    # Extract settings
+    personality = data.get('personality', 'Helix').lower()
+    privacy_mode = data.get('privacy_mode', False)
+    force_offline = data.get('force_offline', False)
+    
+    # Process through Hybrid Engine
+    analysis = nlp_engine.get_analysis(user_text)
+    messages = [{"role": "user", "content": user_text}] # Simplified for contract
+    
+    response_text = nlp_engine.smart_generate(
+        messages, 
+        privacy_mode=privacy_mode, 
+        force_offline=force_offline,
+        personality=personality
+    )
+    
+    latency = time.time() - start_time
+    logger.info(f"Chat completed: latency={latency:.2f}s")
+    
     return jsonify({
-        "status": "online", 
-        "version": "2.0.0", 
-        "adaptive_core": True,
-        "supabase_connected": False,
-        "device_offline": not network_checker.is_online(),
-        "edge_ready": True
+        "interaction_id": f"int-{int(time.time())}",
+        "response": response_text,
+        "metadata": {
+            "latency": f"{latency:.2f}s",
+            "model_path": "edge" if force_offline or privacy_mode else "hybrid"
+        }
     })
 
-@app.route('/api/mode', methods=['GET'])
-def get_mode():
-    return jsonify({
-        "mode": "online" if network_checker.is_online() else "offline",
-        "current_gateway": "cloud" if network_checker.is_online() else "local"
-    })
-
-@app.route('/api/chat/stream', methods=['POST', 'OPTIONS'])
-@app.route('/api/chat', methods=['POST', 'OPTIONS'])
-def api_chat_stream():
-    if request.method == 'OPTIONS': return jsonify({"status": "ok"}), 200
-    # Proxies to the main process_text logic but for /api path
-    return process_text()
-
-@app.route('/api/users/<user_id>/profile', methods=['GET', 'OPTIONS'])
-def api_user_profile(user_id):
-    if request.method == 'OPTIONS': return jsonify({"status": "ok"}), 200
-    return jsonify(memory_manager.get_memory_snapshot())
-
-@app.route('/api/users/<user_id>/history', methods=['GET', 'OPTIONS'])
-def api_user_history(user_id):
-    if request.method == 'OPTIONS': return jsonify({"status": "ok"}), 200
-    return get_history()
-
-@app.route('/api/users/<user_id>/clear', methods=['POST', 'OPTIONS'])
-def api_user_clear(user_id):
-    if request.method == 'OPTIONS': return jsonify({"status": "ok"}), 200
-    return clear_memory()
-
-@app.route('/api/feedback', methods=['POST', 'OPTIONS'])
-def api_feedback():
-    if request.method == 'OPTIONS': return jsonify({"status": "ok"}), 200
+@app.route('/api/chat/stream', methods=['POST'])
+def chat_streaming():
+    """STRICT CONTRACT: SSE Streaming Endpoint."""
     data = request.json
-    from fullstack.schemas import FeedbackRequest
+    user_id = data.get('user_id', 'guest')
+    user_text = sanitize_input(data.get('message', ''))
     
-    try:
-        feedback_obj = FeedbackRequest(
-            interaction_id=data.get("interaction_id"),
-            user_id=data.get("user_id", "guest-user"),
-            vote=1 if data.get("vote") == 'up' else -1,
-            tags=data.get("tags", []),
-            notes=data.get("notes", "")
-        )
-        reward = 1.0 if feedback_obj.vote == 1 else -0.5
+    if not user_text:
+        return jsonify({"error": "Message content required"}), 400
+
+    personality = data.get('personality', 'Helix').lower()
+    privacy_mode = data.get('privacy_mode', False)
+    force_offline = data.get('force_offline', False)
+
+    def generate():
+        logger.info(f"Stream starting: user={user_id}")
+        messages = [{"role": "user", "content": user_text}]
         
-        # Save to DB
-        repository.add_feedback(feedback_obj, reward)
+        for token in nlp_engine.smart_generate_stream(
+            messages,
+            privacy_mode=privacy_mode,
+            force_offline=force_offline,
+            personality=personality
+        ):
+            payload = json.dumps({"token": token})
+            yield f"data: {payload}\n\n"
         
-        # Also update local memory snapshot
-        memory_manager.submit_feedback(
-            feedback_obj.interaction_id,
-            data.get("vote"),
-            feedback_obj.tags
-        )
-        
-        return jsonify({
-            "status": "success",
-            "updated_profile": memory_manager.get_memory_snapshot()
-        })
-    except Exception as e:
-        print(f"Feedback error: {e}")
-        return jsonify({"error": "Failed to record feedback"}), 500
+        yield "data: [DONE]\n\n"
+
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
+
+# --- LEGACY COMPATIBILITY ---
+@app.route('/text/process', methods=['POST'])
+def legacy_process():
+    return chat_blocking()
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    # Production server usually run via Gunicorn, but this allows direct dev testing
+    app.run(host='0.0.0.0', port=8000, threaded=True)

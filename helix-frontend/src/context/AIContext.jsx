@@ -127,14 +127,17 @@ export const AIProvider = ({ children }) => {
 
   const processText = async (text, options = {}) => {
     setIsProcessing(true);
+    const draftId = `pending-${Date.now()}`;
     const draft = {
-      interaction_id: `pending-${Date.now()}`,
+      interaction_id: draftId,
       input_text: text,
       response: '',
       metadata: {},
       pending: true,
     };
+    
     setHistory((prev) => [...prev, draft].slice(-50));
+
     try {
       const outboundHistory = history.flatMap((item) => {
         const rows = [];
@@ -147,44 +150,66 @@ export const AIProvider = ({ children }) => {
         return rows;
       });
 
-      const res = await textAPI.process({
-        user_id: userId,
-        message: text,
-        history: outboundHistory,
-        personality,
-        privacy_mode: options.privacy_mode || false,
-        force_offline: options.force_offline || false
+      const response = await fetch(`${BACKEND}/api/chat/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: userId,
+          message: text,
+          history: outboundHistory,
+          personality,
+          privacy_mode: options.privacy_mode || false,
+          force_offline: options.force_offline || false
+        }),
       });
 
-      const event = res.data;
-      const finalPayload = {
-        interaction_id: event.interaction_id || draft.interaction_id,
-        input_text: text,
-        response: event.response,
-        metadata: { ...(event.metadata || {}), backend_interaction_id: event.interaction_id },
-        model_version: event.metadata?.model_version || '2.0.0',
-        pending: false,
-      };
-      if (event.profile) setProfile(event.profile);
-      if (event.system_label) setSystemLabel(event.system_label);
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
-      setHistory((prev) =>
-        prev.map((item) => (item.interaction_id === draft.interaction_id ? finalPayload : item))
-      );
-      setLastResponse(finalPayload);
-      return finalPayload;
-    } catch (err) {
-      console.error('API connection failed', err);
-      setHistory((prev) => prev.filter((item) => item.interaction_id !== draft.interaction_id));
-      
-      // Better error messaging based on error type
-      if (err?.code === 'ERR_NETWORK' || err?.message?.includes('Network Error')) {
-        toast.error('Backend is waking up — please try again in a moment');
-      } else if (err?.response?.status === 500) {
-        toast.error('Server error — the backend hit an issue. Try again.');
-      } else {
-        toast.error('Connection failed. Backend may be starting up.');
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let fullResponse = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const dataStr = line.slice(6);
+            if (dataStr === '[DONE]') break;
+            
+            try {
+              const data = JSON.parse(dataStr);
+              if (data.token) {
+                fullResponse += data.token;
+                // Live update history for streaming effect
+                setHistory(prev => prev.map(item => 
+                  item.interaction_id === draftId 
+                    ? { ...item, response: fullResponse }
+                    : item
+                ));
+              }
+            } catch (e) { console.warn("JSON parse error in stream", e); }
+          }
+        }
       }
+
+      // Mark as complete
+      setHistory(prev => prev.map(item => 
+        item.interaction_id === draftId 
+          ? { ...item, pending: false }
+          : item
+      ));
+
+      return { response: fullResponse };
+    } catch (err) {
+      console.error('Streaming connection failed', err);
+      // Clean up failed draft
+      setHistory((prev) => prev.filter((item) => item.interaction_id !== draftId));
+      toast.error('Connection failed. Backend may be offline.');
       throw err;
     } finally {
       setIsProcessing(false);

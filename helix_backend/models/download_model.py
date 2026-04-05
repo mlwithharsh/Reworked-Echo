@@ -10,7 +10,7 @@ def download_gguf(url, dest_path):
         print(f"Model already exists at {dest_path}")
         return
 
-    print(f"Downloading Edge AI Model: {os.path.basename(dest_path)} ({total_size/1e6:.1f} MB)...")
+    print(f"Downloading Production GGUF Model: {os.path.basename(dest_path)} ({total_size/1e6:.1f} MB)...")
     
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
     
@@ -26,6 +26,7 @@ def download_gguf(url, dest_path):
             bar.update(size)
 
 if __name__ == "__main__":
-    MODEL_URL = "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf?download=true"
-    DEST = "d:/ECHO V1/helix_backend/models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
+    # Standardizing on Qwen2-0.5B-Instruct GGUF for production
+    MODEL_URL = "https://huggingface.co/Qwen/Qwen2-0.5B-Instruct-GGUF/resolve/main/qwen2-0.5b-instruct-q4_k_m.gguf"
+    DEST = "d:/ECHO V1/helix_backend/models/qwen2-0.5b-instruct-q4_k_m.gguf"
     download_gguf(MODEL_URL, DEST)

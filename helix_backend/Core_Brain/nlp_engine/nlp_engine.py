@@ -1,14 +1,18 @@
-# NLP Engine — intent detection, emotion analysis, Groq API integration
 import json
 import logging
 import os
 import time
+from typing import List, Dict, Optional, Generator
 from functools import lru_cache
 from pathlib import Path
 
 import requests
 from helix_backend.router.router import get_routing_decision
-from helix_backend.edge_model.engine import generate_local
+from helix_backend.edge_model.engine import edge_engine
+from helix_backend.utils.cache.manager import cache_manager
+from helix_backend.utils.context.context_manager import context_manager
+from helix_backend.utils.plugins.hook import plugin_hook
+import statistics
 
 try:
     from dotenv import load_dotenv
@@ -30,29 +34,115 @@ class NLPEngine:
         if not self.api_key:
             self.logger.warning("GROQ_API_KEY not found — Groq calls will fail and fall back to local model.")
 
-    def smart_generate(self, messages, max_tokens=200, temperature=0.7, privacy_mode=False, force_offline=False):
-        """
-        Intelligently routes and generates response using either local or cloud model.
-        """
-        # Get the user query (last message)
+        self.metrics = {
+            "requests_total": 0,
+            "cloud_success": 0,
+            "edge_success": 0,
+            "cache_hits": 0,
+            "routing": {"cloud": 0, "edge": 0},
+            "latency_history": [],
+            "latency_p95": 0,
+            "ratio_edge_cloud": 0
+        }
+
+    def memory_lookup_hook(self, query: str) -> Optional[str]:
+        """Placeholder for embedding-based retrieval (RAG)."""
+        # In a future phase, this would trigger ChromaDB/FAISS lookup
+        return None
+
+    def smart_generate_stream(self, messages, max_tokens=2024, temperature=0.7, privacy_mode=False, force_offline=False, personality="Helix"):
+        """Production streaming generator with Partial Fallback and Adaptive metrics."""
+        self.metrics["requests_total"] += 1
+        start_time = time.time()
+        
+        # 1. Context Management
+        messages = context_manager.trim_history(messages)
         user_query = messages[-1].get("content", "")
+
+        # Optional: Memory augmentation
+        rag_context = self.memory_lookup_hook(user_query)
+        if rag_context:
+            self.logger.info("Memory Hook: Found relevant context.")
+
+        # 2. Cache Check
+        cached_res = cache_manager.get(user_query, personality)
+        if cached_res:
+            self.metrics["cache_hits"] += 1
+            yield cached_res
+            return
+
+        # 3. Routing Decision (Advanced Dict)
+        routing_data = get_routing_decision(user_query, privacy_mode=privacy_mode, force_offline=force_offline)
+        decision = routing_data["route"]
+        tag = routing_data["tag"]
+        self.metrics["routing"][decision] += 1
         
-        # 1. Ask the Router
-        decision = get_routing_decision(user_query, privacy_mode=privacy_mode, force_offline=force_offline)
-        
-        if decision == "local":
-            self.logger.info("Executing LOCAL EDGE AI generation...")
-            return generate_local(messages, max_tokens=max_tokens, temperature=temperature)
+        # --- LOCAL EDGE PATH ---
+        if decision == "edge":
+            self.logger.info(f"ROUTING -> LOCAL (EDGE) STREAM [Tag={tag}]")
+            success = False
+            full_response = ""
+            for token in edge_engine.generate_stream(messages, max_tokens):
+                success = True
+                full_response += token
+                yield token
+            
+            if success:
+                self.metrics["edge_success"] += 1
+                cache_manager.set(user_query, personality, full_response)
+                
+        # --- CLOUD PATH ---
         else:
-            self.logger.info("Executing CLOUD API generation...")
-            response = self.call_groq_model(messages, max_tokens=max_tokens, temperature=temperature)
+            self.logger.info(f"ROUTING -> CLOUD (GROQ) STREAM [Tag={tag}]")
+            success = False
+            full_response = ""
+            produced_stream_tokens = 0
             
-            # If cloud fails, fallback to local as absolute safety
-            if response.startswith("[Groq Error]"):
-                self.logger.warning("Cloud failed, falling back to local model...")
-                return generate_local(messages, max_tokens=max_tokens, temperature=temperature)
-            
-            return response
+            try:
+                for token in self.call_groq_stream(messages, max_tokens, temperature):
+                    success = True
+                    produced_stream_tokens += 1
+                    full_response += token
+                    yield token
+            except Exception as e:
+                self.logger.error(f"CLOUD mid-stream failure: {e}")
+                
+            # Partial Fallback Logic: If cloud fails mid-stream or completely
+            if not success or (produced_stream_tokens > 0 and not full_response.endswith(".") and not full_response.endswith("!")):
+                self.logger.warning("CLOUD path incomplete. Triggering PARTIAL FALLBACK to Edge.")
+                
+                # Append partial response to history to continue
+                partial_messages = messages + [{"role": "assistant", "content": full_response}]
+                for token in edge_engine.generate_stream(partial_messages, max_tokens):
+                    full_response += token
+                    yield token
+            else:
+                self.metrics["cloud_success"] += 1
+                # Adjust Adaptive Scoring based on Cloud Performance
+                latency = time.time() - start_time
+                from ..router.router import router as live_router
+                live_router.adjust_threshold(latency)
+                cache_manager.set(user_query, personality, full_response)
+
+        # Update Metrics (P95 and Ratio)
+        latency = time.time() - start_time
+        self.metrics["latency_history"].append(latency)
+        if len(self.metrics["latency_history"]) > 100:
+            self.metrics["latency_history"].pop(0) # Keep 100 rolling
+        
+        if len(self.metrics["latency_history"]) >= 5:
+            self.metrics["latency_p95"] = round(statistics.quantiles(self.metrics["latency_history"], n=100)[94], 2)
+        
+        total_routes = sum(self.metrics["routing"].values())
+        if total_routes > 0:
+            self.metrics["ratio_edge_cloud"] = round(self.metrics["routing"]["edge"] / total_routes, 2)
+
+    def smart_generate(self, messages, max_tokens=200, temperature=0.7, privacy_mode=False, force_offline=False):
+        """Blocking version of the hybrid generator."""
+        full_text = ""
+        for token in self.smart_generate_stream(messages, max_tokens, temperature, privacy_mode, force_offline):
+            full_text += token
+        return full_text
 
     def call_groq_model(self, messages, max_tokens=200, temperature=0.7):
         if not self.api_key:
@@ -115,6 +205,44 @@ class NLPEngine:
                     time.sleep(3)
 
         return "[Groq Error]: Failed after 3 attempts"
+
+    def call_groq_stream(self, messages, max_tokens=200, temperature=0.7):
+        """Native streaming from Groq API."""
+        if not self.api_key:
+            return
+
+        payload = {
+            "model": self.model_name,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": True # Streaming enabled
+        }
+        
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        response = requests.post(self.api_url, headers=headers, json=payload, stream=True, timeout=10)
+        
+        if response.status_code != 200:
+            return
+
+        for line in response.iter_lines():
+            if line:
+                decoded_line = line.decode('utf-8')
+                if decoded_line.startswith('data: '):
+                    data_str = decoded_line[6:]
+                    if data_str == '[DONE]':
+                        break
+                    try:
+                        data_json = json.loads(data_str)
+                        token = data_json['choices'][0]['delta'].get('content', '')
+                        if token:
+                            yield token
+                    except:
+                        continue
 
     def _keyword_intent_fallback(self, user_input):
         lowered = (user_input or "").lower()

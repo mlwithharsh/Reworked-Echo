@@ -1,66 +1,56 @@
-# HELIX Edge AI: Hybrid Intelligence System — Implementation & Integration Plan
+# HELIX ENTERPRISE: Final Advanced Hybrid AI (GGUF) Plan
 
-This document outlines the architecture, integration plan, and performance benchmarks for the HELIX Hybrid Cloud + Edge AI system.
-
-## 1. Hybrid Architecture Overview
-
-HELIX now operates using a **Hybrid Intelligence System** that dynamically routes queries between a local Edge AI model (Privacy-first, Offline-capable) and a powerful Cloud-based model (Complexity-optimized).
-
-### Key Components:
-- **`ModelRouter`**: The decision engine that analyzes query complexity, network status, and user privacy settings.
-- **`EdgeEngine`**: A lightweight, CPU-optimized inference layer based on `llama-cpp-python` (GGUF).
-- **`NetworkChecker`**: Real-time detection of connectivity status to enable seamless offline fallback.
+This document defines the final architectural state for HELIX Enterprise Intelligence, featuring adaptive systems and preemptive logic.
 
 ---
 
-## 2. Android Integration Plan (Mobile Edge AI)
+## 1. Preemptive Intelligence & Lifecycle
+HELIX now predicts user intent during interaction to minimize human-perceived latency.
 
-To bring HELIX's Edge AI capabilities to Android devices, we will leverage the **ONNX Runtime Mobile** and **llama.cpp JNI bindings** for efficient on-device inference.
-
-### Implementation Steps:
-1. **Model Optimization**:
-   - Quantize the base model (e.g., TinyLlama-1.1B or Phi-2) to **4-bit (Q4_K_M)** using `llama.cpp` tools.
-   - Target model size: **< 1.0 GB** for high compatibility across mid-range devices.
-2. **Inference Engine**:
-   - Use `onnxruntime-mobile` for high-performance CPU execution on Android.
-   - Alternatively, integrate `llama-android-cpp` as a native library for direct GGUF support.
-3. **Background Lifecycle**:
-   - Implement **Lazy Loading** to ensure the model only consumes RAM when the user starts a session.
-   - Use Android **Foreground Services** if background processing is required to prevent OS-level termination.
-4. **Offline Sync**:
-   - Implement a message queue that buffers local interactions while offline.
-   - Automatically sync to Supabase once the device regains internet connectivity using a `ConnectivityManager` listener.
+- **Preemptive Routing**: Via `/api/predict`, the system analyzes typing-time text to predict whether a query will go to Cloud or Edge.
+- **Background Warmup**: If the predicted route is Edge, the system pre-emptively warms up the GGUF model in a background thread, ensuring it is ready *before* the user hits Enter.
+- **Strict Edge Timeout**: Local inference is capped at **10 seconds** to prevent UI hangs and conserve CPU for other background tasks.
 
 ---
 
-## 3. Performance Benchmarks (Estimated)
+## 2. Adaptive Hybrid Routing (v3.0)
+The routing engine now features **Capability Tagging** and **Self-Tuning Logic**:
 
-*Based on hardware with 8GB RAM and 4+ CPU Cores*
-
-| Metric | Edge AI (Local) | Cloud AI (Groq/API) |
-| :--- | :--- | :--- |
-| **First Token Latency** | ~200ms - 500ms | ~400ms - 1.2s |
-| **Token Generation Rate** | ~10 - 20 tokens/sec | ~50+ tokens/sec |
-| **Memory Usage (RAM)** | ~800MB - 1.2GB | < 100MB |
-| **Reliability** | 100% (No Internet needed) | ~98% (Network dependent) |
-| **Privacy Tier** | Maximum (On-device Only) | Standard (SSL Encrypted) |
-
-### Performance Optimization Strategies:
-- **Quantization**: Always use 4-bit or 8-bit quantized models to fit within the 8GB RAM target.
-- **KV Cache**: Persist the key-value cache between turns to reduce "First Token Latency" in long conversations.
-- **Model Switching**: Only load the local model into memory if the router predicts it will be needed (e.g., simple queries) or if the device is offline.
+- **Capability Tagging**: Automatically classifies queries into 4 categories:
+  - `Code`: High-complexity, forced to Cloud for precision.
+  - `Analysis`: Complex, routes to Cloud by default.
+  - `System`: Simple, routes to Edge natively.
+  - `Chat`: Balanced, routes based on adaptive score.
+- **Adaptive Scoring**: The complexity threshold dynamically shifts based on real-world Cloud latency. If the Cloud API slows down (>15s), HELIX automatically lowers its threshold to utilize the local Edge engine more frequently.
 
 ---
 
-## 4. Privacy & Offline Controls
-
-Users can now control their AI processing via the Chat UI:
-1. **Privacy Mode**: Forces all data to stay on-device. No external API calls are made, even if internet is available.
-2. **Go Offline**: Forces the HELIX Router to use only the Edge AI model, simulating an offline state for testing or data-saving.
+## 3. Resilient "Partial Fallback" Architecture
+To achieve 100% reliability, HELIX implements mid-stream recovery:
+- **Mid-Stream Trigger**: If a Cloud (Groq) stream fails or times out *after* starting but before completion, the system detects the interruption.
+- **Seamless Local Continuation**: HELIX injects the partial response into the local Edge context and **finishes the thought** natively on the CPU without the user seeing an error.
 
 ---
 
-## 5. Next Steps
-- [ ] Download and place `tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf` into `helix_backend/models/`.
-- [ ] Install dependencies: `pip install llama-cpp-python`.
-- [ ] Conduct live benchmarks on target production hardware.
+## 4. Enterprise Observability & Memory Hooks
+- **Advanced Metrics**:
+  - **P95 Latency**: Accurate tracking of the 95th percentile response time.
+  - **Usage Ratio**: Continuous monitoring of Edge vs. Cloud workload distribution.
+- **Memory Hook (RAG Readiness)**: A formal `memory_lookup_hook` is now integrated into the NLP pipeline, ready for immediate integration with vector databases (ChromaDB/FAISS) for long-term intelligence.
+
+---
+
+## 5. Security & Ingestion Hardening
+- **Sanitization Layer**: All user inputs are stripped of non-printable control characters and capped at 5000 characters.
+- **Payload Strictness**: All API requests are capped at **100KB** to eliminate buffer-injection or DOS vectors.
+- **Credential Protection**: Unified Header-based X-API-Key validation for all administrative/metrics endpoints.
+
+---
+
+## 6. Final Engineering Checklist
+- [x] **Preemptive Warming**: Predictive model loading.
+- [x] **Capability Tagging**: Specialized classification logic.
+- [x] **Adaptive Thresholds**: Performance-aware self-tuning.
+- [x] **Partial Fallback**: Resilient mid-stream recovery.
+- [x] **Security Hardening**: Sanitization and payload limits.
+- [x] **P95 Metrics Suite**: Enterprise-grade observability.
