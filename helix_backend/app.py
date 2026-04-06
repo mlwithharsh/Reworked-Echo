@@ -118,8 +118,9 @@ def model_to_dict(obj):
     return obj
 
 # --- AUTHENTICATION v1 ---
-@app.route('/api/auth/signup', methods=['POST'])
+@app.route('/api/v1/auth/signup', methods=['POST'])
 def auth_signup():
+
     data = request.json
     name = data.get("name", "")
     email = data.get("email", "")
@@ -129,8 +130,9 @@ def auth_signup():
     if error: return jsonify({"error": error}), 400
     return jsonify({"user_id": user_id, "message": "Success"})
 
-@app.route('/api/auth/login', methods=['POST'])
+@app.route('/api/v1/auth/login', methods=['POST'])
 def auth_login():
+
     data = request.json
     email = data.get("email", "")
     password = data.get("password", "")
@@ -139,8 +141,9 @@ def auth_login():
     if error: return jsonify({"error": error}), 401
     return jsonify({"user_id": user_id, "message": "Login Success"})
 
-@app.route('/api/users/<user_id>/profile', methods=['GET', 'PUT'])
+@app.route('/api/v1/users/<user_id>/profile', methods=['GET', 'PUT'])
 def user_profile(user_id):
+
     if not repository: return jsonify({"error": "DB Unavailable"}), 503
     if request.method == 'GET':
         profile = repository.get_user_profile(user_id)
@@ -156,7 +159,8 @@ def user_profile(user_id):
         except Exception as e:
             return jsonify({"error": str(e)}), 400
 
-@app.route('/api/users/<user_id>/history', methods=['GET'])
+@app.route('/api/v1/users/<user_id>/history', methods=['GET'])
+
 def user_history(user_id):
     if not repository: return jsonify({"error": "DB Unavailable"}), 503
     records = repository.list_recent_interactions(user_id)
@@ -170,13 +174,15 @@ def user_history(user_id):
         items.append(d)
     return jsonify({"items": items})
 
-@app.route('/api/users/<user_id>/clear', methods=['POST'])
+@app.route('/api/v1/users/<user_id>/clear', methods=['POST'])
 def clear_user_history(user_id):
+
     if not repository: return jsonify({"error": "DB Unavailable"}), 503
     repository.clear_history(user_id)
     return jsonify({"status": "cleared"})
 
-@app.route('/api/feedback', methods=['POST'])
+@app.route('/api/v1/feedback', methods=['POST'])
+
 def submit_feedback():
     if not repository: return jsonify({"error": "DB Unavailable"}), 503
     from helix_backend.fullstack.schemas import FeedbackRequest

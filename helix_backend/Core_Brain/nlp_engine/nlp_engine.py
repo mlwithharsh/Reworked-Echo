@@ -96,6 +96,10 @@ class NLPEngine:
                 for token in self.call_groq_stream(messages, max_tokens, temperature):
                     full_response += token
                     yield token
+            
+            if not success and (privacy_mode or force_offline):
+                yield "\n[Helix Status]: Edge AI engine is still cold/waking up on the server. Continuing in cloud mode is recommended until the sidecar is ready."
+
                 
             if full_response:
                 self.metrics["edge_success"] += 1 if success else 0
