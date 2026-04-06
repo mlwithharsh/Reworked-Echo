@@ -55,12 +55,19 @@ class NLPEngine:
 
     def smart_generate_stream(self, messages, max_tokens=2024, temperature=0.7, privacy_mode=False, force_offline=False, personality="Helix"):
         """Production streaming generator with Partial Fallback and Adaptive metrics."""
-        from helix_backend.router.router import get_routing_decision
-        from helix_backend.edge_model.engine import edge_engine
-        from helix_backend.utils.cache.manager import cache_manager
-        from helix_backend.utils.context.context_manager import context_manager
+        try:
+            from helix_backend.router.router import get_routing_decision
+            from helix_backend.edge_model.engine import edge_engine
+            from helix_backend.utils.cache.manager import cache_manager
+            from helix_backend.utils.context.context_manager import context_manager
+        except ImportError:
+            from router.router import get_routing_decision
+            from edge_model.engine import edge_engine
+            from utils.cache.manager import cache_manager
+            from utils.context.context_manager import context_manager
         
         self.metrics["requests_total"] += 1
+
         start_time = time.time()
         
         # 1. Context Management

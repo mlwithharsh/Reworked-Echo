@@ -214,8 +214,11 @@ export const AIProvider = ({ children }) => {
       console.error('Streaming connection failed', err);
       // Clean up failed draft
       setHistory((prev) => prev.filter((item) => item.interaction_id !== draftId));
-      toast.error('Connection failed. Backend may be offline.');
+      
+      const errorMsg = err.message || 'Connection failed. Backend may be offline.';
+      toast.error(`Error: ${errorMsg}`);
       throw err;
+
     } finally {
       setIsProcessing(false);
     }
