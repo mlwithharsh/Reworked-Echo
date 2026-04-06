@@ -130,7 +130,8 @@ class NLPEngine:
                 self.metrics["cloud_success"] += 1
                 # Adjust Adaptive Scoring based on Cloud Performance
                 latency = time.time() - start_time
-                from ..router.router import router as live_router
+                from helix_backend.router.router import router as live_router
+
                 live_router.adjust_threshold(latency)
                 cache_manager.set(user_query, personality, full_response)
 

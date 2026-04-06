@@ -15,20 +15,7 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.append(project_root)
 
-# Import Helix Core Components
-# Core imports (using project-relative paths)
 try:
-    from Core_Brain.nlp_engine.nlp_engine import NLPEngine
-    from Core_Brain.memory_manager import MemoryManager
-    from Core_Brain.nlp_engine.personality_router import PersonalityRouter
-    from Core_Brain.adaptive_core.orchestration import AdaptiveOrchestrator
-    from fullstack.services.repository import SupabaseRepository
-    from fullstack.config import get_settings
-    from utils.network_checker.checker import helper as network_checker
-    from edge_model.engine import edge_engine
-    from router.router import get_routing_decision
-except ImportError:
-    # Fallback for different CWDs on Render
     from helix_backend.Core_Brain.nlp_engine.nlp_engine import NLPEngine
     from helix_backend.Core_Brain.memory_manager import MemoryManager
     from helix_backend.Core_Brain.nlp_engine.personality_router import PersonalityRouter
@@ -38,14 +25,33 @@ except ImportError:
     from helix_backend.utils.network_checker.checker import helper as network_checker
     from helix_backend.edge_model.engine import edge_engine
     from helix_backend.router.router import get_routing_decision
+except ImportError:
+    # Alternative path for when helix_backend is the CWD
+    from Core_Brain.nlp_engine.nlp_engine import NLPEngine
+    from Core_Brain.memory_manager import MemoryManager
+    from Core_Brain.nlp_engine.personality_router import PersonalityRouter
+    from Core_Brain.adaptive_core.orchestration import AdaptiveOrchestrator
+    from fullstack.services.repository import SupabaseRepository
+    from fullstack.config import get_settings
+    from utils.network_checker.checker import helper as network_checker
+    from edge_model.engine import edge_engine
+    from router.router import get_routing_decision
+
 
 # Load Environment
-load_dotenv(os.path.join(project_root, 'helix-frontend', '.env'))
+load_dotenv(os.path.join(project_root, '.env'))
+
 
 # --- HELIX PRODUCTION APP ---
 app = Flask(__name__)
 app.start_time = time.time()
-CORS(app, resources={r"/api/*": {"origins": ["https://helix-ai-eta.vercel.app", "http://localhost:3000"]}})
+CORS(app, resources={r"/api/*": {
+    "origins": ["https://helix-ai-eta.vercel.app", "http://localhost:3000"],
+    "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    "allow_headers": ["Content-Type", "Authorization", "X-API-Key", "X-API-Token"],
+    "supports_credentials": True
+}})
+
 
 # Logging configuration
 logging.basicConfig(
@@ -105,7 +111,94 @@ def check_rate_limit(user_id):
     API_SESSIONS[user_id] = user_data
     return True
 
+# --- SHARED API v1 HELPERS ---
+def model_to_dict(obj):
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump()
+    return obj
+
+# --- AUTHENTICATION v1 ---
+@app.route('/api/auth/signup', methods=['POST'])
+def auth_signup():
+    data = request.json
+    name = data.get("name", "")
+    email = data.get("email", "")
+    password = data.get("password", "")
+    if not repository: return jsonify({"error": "DB Unavailable"}), 503
+    user_id, error = repository.signup(email, password, name)
+    if error: return jsonify({"error": error}), 400
+    return jsonify({"user_id": user_id, "message": "Success"})
+
+@app.route('/api/auth/login', methods=['POST'])
+def auth_login():
+    data = request.json
+    email = data.get("email", "")
+    password = data.get("password", "")
+    if not repository: return jsonify({"error": "DB Unavailable"}), 503
+    user_id, error = repository.login(email, password)
+    if error: return jsonify({"error": error}), 401
+    return jsonify({"user_id": user_id, "message": "Login Success"})
+
+@app.route('/api/users/<user_id>/profile', methods=['GET', 'PUT'])
+def user_profile(user_id):
+    if not repository: return jsonify({"error": "DB Unavailable"}), 503
+    if request.method == 'GET':
+        profile = repository.get_user_profile(user_id)
+        return jsonify(model_to_dict(profile))
+    else:
+        # PUT logic (update)
+        # Simplified: assume input matches model
+        from helix_backend.fullstack.schemas import PersonalityProfile
+        try:
+            profile_data = PersonalityProfile(**request.json)
+            updated = repository.upsert_user_profile(profile_data)
+            return jsonify(model_to_dict(updated))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 400
+
+@app.route('/api/users/<user_id>/history', methods=['GET'])
+def user_history(user_id):
+    if not repository: return jsonify({"error": "DB Unavailable"}), 503
+    records = repository.list_recent_interactions(user_id)
+    # Convert records to dicts for JSON
+    items = []
+    for r in records:
+        d = model_to_dict(r)
+        # Ensure timestamp is ISO string
+        if isinstance(d.get('created_at'), datetime):
+            d['created_at'] = d['created_at'].isoformat()
+        items.append(d)
+    return jsonify({"items": items})
+
+@app.route('/api/users/<user_id>/clear', methods=['POST'])
+def clear_user_history(user_id):
+    if not repository: return jsonify({"error": "DB Unavailable"}), 503
+    repository.clear_history(user_id)
+    return jsonify({"status": "cleared"})
+
+@app.route('/api/feedback', methods=['POST'])
+def submit_feedback():
+    if not repository: return jsonify({"error": "DB Unavailable"}), 503
+    from helix_backend.fullstack.schemas import FeedbackRequest
+    from helix_backend.fullstack.services.reward_service import feedback_reward
+    try:
+        data = request.json
+        fb_req = FeedbackRequest(**data)
+        reward = feedback_reward(fb_req.vote, fb_req.tags)
+        repository.add_feedback(fb_req, reward)
+        
+        # Update user profile based on reward/tags (simplified)
+        current = repository.get_user_profile(fb_req.user_id)
+        from helix_backend.fullstack.services.profile_adapter import update_profile_from_feedback
+        updated = update_profile_from_feedback(current, fb_req)
+        repository.upsert_user_profile(updated)
+        
+        return jsonify({"reward": reward, "updated_profile": model_to_dict(updated)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
 # --- API v1 CONTRACTS ---
+
 
 @app.route('/api/v1/status', methods=['GET'])
 def get_status():
@@ -200,6 +293,14 @@ def chat_blocking():
     latency = time.time() - start_time
     logger.info(f"Chat completed: latency={latency:.2f}s")
     
+    # Persistent Record
+    if repository:
+        repository.create_interaction(
+            user_id, user_text, response_text, 
+            "1.0.0-beta", # version
+            {"latency": f"{latency:.2f}s", "model": "edge" if force_offline or privacy_mode else "hybrid"}
+        )
+    
     return jsonify({
         "interaction_id": f"int-{int(time.time())}",
         "response": response_text,
@@ -208,6 +309,7 @@ def chat_blocking():
             "model_path": "edge" if force_offline or privacy_mode else "hybrid"
         }
     })
+
 
 @app.route('/api/v1/chat/stream', methods=['POST'])
 def chat_streaming():
@@ -240,19 +342,34 @@ def chat_streaming():
     def generate():
         logger.info(f"SSE Stream starting: user={user_id}")
         messages = [{"role": "user", "content": user_text}]
+        full_response = ""
         
-        for token in nlp_engine.smart_generate_stream(
-            messages,
-            privacy_mode=privacy_mode,
-            force_offline=force_offline,
-            personality=personality
-        ):
-            payload = json.dumps({"token": token})
-            yield f"data: {payload}\n\n"
+        try:
+            for token in nlp_engine.smart_generate_stream(
+                messages,
+                privacy_mode=privacy_mode,
+                force_offline=force_offline,
+                personality=personality
+            ):
+                full_response += token
+                payload = json.dumps({"token": token})
+                yield f"data: {payload}\n\n"
+            
+            # Persistent Record at End of Stream
+            if repository and full_response:
+                repository.create_interaction(
+                    user_id, user_text, full_response, 
+                    "1.0.0-beta", 
+                    {"mode": "stream", "model": "hybrid"}
+                )
+        except Exception as e:
+            logger.error(f"Stream error: {e}")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
         
         yield "data: [DONE]\n\n"
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
+
 
 # --- LEGACY COMPATIBILITY (REDIRECTS) ---
 @app.route('/api/chat', methods=['POST'])

@@ -20,7 +20,8 @@ const LoginPage = () => {
     setError('');
     
     try {
-      const res = await axios.post(`${BACKEND}/api/auth/login`, {
+      const res = await axios.post(`${BACKEND}/api/v1/auth/login`, {
+
         email,
         password
       });

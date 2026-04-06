@@ -26,11 +26,12 @@ const SignupPage = () => {
     setError('');
     
     try {
-      const res = await axios.post(`${BACKEND}/api/auth/signup`, {
+      const res = await axios.post(`${BACKEND}/api/v1/auth/signup`, {
         name,
         email,
         password
       });
+
       localStorage.setItem('helix_user_id', res.data.user_id);
       navigate('/chat');
     } catch (err) {

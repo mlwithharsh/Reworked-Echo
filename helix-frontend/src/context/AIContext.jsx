@@ -1,8 +1,10 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { coreAPI, feedbackAPI, modelAPI, textAPI, userAPI } from '../api/client';
 import toast from 'react-hot-toast';
+const BACKEND = import.meta.env.VITE_BACKEND_URL || 'https://reworked-echo.onrender.com';
 
 const AIContext = createContext();
+
 
 // Cold start timeout — Render free tier can take up to 60s
 const COLD_START_TIMEOUT = 15000;
@@ -150,7 +152,8 @@ export const AIProvider = ({ children }) => {
         return rows;
       });
 
-      const response = await fetch(`${BACKEND}/api/chat/stream`, {
+      const response = await fetch(`${BACKEND}/api/v1/chat/stream`, {
+
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

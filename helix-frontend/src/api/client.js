@@ -23,27 +23,32 @@ api.interceptors.response.use(
 );
 
 export const coreAPI = {
-  getStatus: () => api.get('/api/status', { timeout: 10000 }), // Shorter timeout for health checks
+  getStatus: () => api.get('/api/v1/status', { timeout: 10000 }), // Shorter timeout for health checks
+
 };
 
 export const userAPI = {
-  getProfile: (userId) => api.get(`/api/users/${userId}/profile`),
-  updateProfile: (userId, profile) => api.put(`/api/users/${userId}/profile`, { ...profile, user_id: userId }),
-  getHistory: (userId) => api.get(`/api/users/${userId}/history`),
-  clearHistory: (userId) => api.post(`/api/users/${userId}/clear`),
+  getProfile: (userId) => api.get(`/api/v1/users/${userId}/profile`),
+  updateProfile: (userId, profile) => api.put(`/api/v1/users/${userId}/profile`, { ...profile, user_id: userId }),
+  getHistory: (userId) => api.get(`/api/v1/users/${userId}/history`),
+  clearHistory: (userId) => api.post(`/api/v1/users/${userId}/clear`),
+
 };
 
 export const textAPI = {
-  process: (payload) => api.post('/api/chat/stream', payload),
+  process: (payload) => api.post('/api/v1/chat/stream', payload),
+
 };
 
 export const feedbackAPI = {
-  submit: (payload) => api.post('/api/feedback', payload),
+  submit: (payload) => api.post('/api/v1/feedback', payload),
+
 };
 
 export const modelAPI = {
-  listVersions: () => api.get('/api/model/versions'),
-  runTraining: (payload) => api.post('/api/training/run', payload),
+  listVersions: () => api.get('/api/v1/model/versions'),
+  runTraining: (payload) => api.post('/api/v1/training/run', payload),
+
 };
 
 export default api;

@@ -1,5 +1,6 @@
 import logging
-from ..utils.network_checker.checker import helper as network_checker
+from helix_backend.utils.network_checker.checker import helper as network_checker
+
 
 class ModelRouter:
     """Production Model Router with Adaptive Scoring and Capability Tagging."""
