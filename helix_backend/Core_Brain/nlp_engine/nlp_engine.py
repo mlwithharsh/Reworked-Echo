@@ -238,7 +238,9 @@ class NLPEngine:
         response = requests.post(self.api_url, headers=headers, json=payload, stream=True, timeout=10)
         
         if response.status_code != 200:
-            return
+            self.logger.error(f"Groq Stream HTTP {response.status_code}: {response.text}")
+            return # This is in a generator, it just ends it
+
 
         for line in response.iter_lines():
             if line:

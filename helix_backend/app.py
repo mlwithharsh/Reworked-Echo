@@ -363,8 +363,10 @@ def chat_streaming():
                     {"mode": "stream", "model": "hybrid"}
                 )
         except Exception as e:
-            logger.error(f"Stream error: {e}")
+            import traceback
+            logger.error(f"Stream error Traceback: {traceback.format_exc()}")
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
         
         yield "data: [DONE]\n\n"
 

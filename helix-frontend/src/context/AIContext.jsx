@@ -1,7 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { coreAPI, feedbackAPI, modelAPI, textAPI, userAPI } from '../api/client';
 import toast from 'react-hot-toast';
-const BACKEND = import.meta.env.VITE_BACKEND_URL || 'https://reworked-echo.onrender.com';
+const rawBackend = import.meta.env.VITE_BACKEND_URL || 'https://reworked-echo.onrender.com';
+const BACKEND = rawBackend.endsWith('/') ? rawBackend.slice(0, -1) : rawBackend;
+
 
 const AIContext = createContext();
 
