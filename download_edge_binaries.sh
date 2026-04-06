@@ -2,7 +2,16 @@
 # HELIX AI - Edge AI Binary Downloader for Linux (Render/Cloud)
 # This script downloads the correct llama-server binary for Linux x64 CPU.
 
-SET_DIR="helix_backend/edge_model"
+# Detect directory
+if [ -d "helix_backend/edge_model" ]; then
+    SET_DIR="helix_backend/edge_model"
+elif [ -d "edge_model" ]; then
+    SET_DIR="edge_model"
+else
+    # Fallback to creating it in current dir if not found
+    SET_DIR="edge_model"
+fi
+
 BINARY_URL="https://github.com/ggml-org/llama.cpp/releases/download/b8672/llama-b8672-bin-ubuntu-x64.tar.gz"
 
 echo "🚀 Preparing Edge AI binaries for Linux..."
