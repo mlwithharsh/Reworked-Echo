@@ -60,4 +60,14 @@ def infer_profile_from_message(profile: PersonalityProfile, message: str) -> Per
         updated.task_focus = max(0.0, updated.task_focus - 0.02)
         updated.engagement_preference = min(1.0, updated.engagement_preference + 0.02)
 
+    # Flirty/Playful markers for Suzi/Helix
+    playful_markers = {"fun", "play", "playful", "joke", "haha", "lol", "joy"}
+    flirty_markers = {"hot", "sexy", "cute", "handsome", "babe", "sweetie", "love", "💋", "😏", "🔥"}
+    
+    if set(lowered.split()) & playful_markers:
+        updated.engagement_preference = min(1.0, updated.engagement_preference + 0.03)
+    if set(lowered.split()) & flirty_markers:
+        updated.engagement_preference = min(1.0, updated.engagement_preference + 0.05)
+        updated.support_preference = min(1.0, updated.support_preference + 0.02) # Intimacy/support
+
     return updated

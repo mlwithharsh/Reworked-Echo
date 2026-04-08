@@ -205,11 +205,33 @@ export const AIProvider = ({ children }) => {
         buffer = lines.pop() || "";
         
         for (const line of lines) {
-          if (!line.trim()) continue;
+          const trimmedLine = line.trim();
+          if (!trimmedLine) continue;
+          
+          // SSE format: data: <payload>
+          if (!trimmedLine.startsWith('data: ')) continue;
+          
+          const rawData = trimmedLine.slice(6); // Remove 'data: '
+          
+          if (rawData === '[DONE]') {
+            setHistory(prev => prev.map(item =>
+              item.interaction_id === draftId
+                ? { ...item, pending: false }
+                : item
+            ));
+            continue;
+          }
+
           try {
-            const data = JSON.parse(line);
-            if (data.type === 'delta' && data.content) {
-              fullResponse += data.content;
+            const data = JSON.parse(rawData);
+            
+            if (data.error) {
+              toast.error(`AI Error: ${data.error}`);
+              continue;
+            }
+
+            if (data.token) {
+              fullResponse += data.token;
 
               if (data.metrics) {
                 metricsRef.current = data.metrics;
@@ -221,23 +243,8 @@ export const AIProvider = ({ children }) => {
                   : item
               ));
             }
-
-            if (data.type === 'done') {
-              setHistory(prev => prev.map(item =>
-                item.interaction_id === draftId
-                  ? {
-                      ...item,
-                      interaction_id: data.interaction_id || draftId,
-                      response: data.response || fullResponse,
-                      metadata: data.metadata || {},
-                      pending: false,
-                      metrics: metricsRef.current,
-                    }
-                  : item
-              ));
-            }
           } catch (e) {
-            console.warn("JSON parse error in stream", e);
+            console.warn("JSON parse error in stream", e, rawData);
           }
         }
       }

@@ -66,15 +66,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("HELIX.API")
 
-@app.before_request
-def handle_options_preflight():
-    if request.method == 'OPTIONS':
-        res = Response()
-        res.headers['Access-Control-Allow-Origin'] = "https://helix-ai-eta.vercel.app"
-        res.headers['Access-Control-Allow-Methods'] = "GET, POST, PUT, DELETE, OPTIONS"
-        res.headers['Access-Control-Allow-Headers'] = "Content-Type, Authorization, X-API-Key, X-API-Token"
-        res.headers['Access-Control-Allow-Credentials'] = "true"
-        return res
 
 
 # --- DIAGNOSTICS & SYSTEM STATUS ---
