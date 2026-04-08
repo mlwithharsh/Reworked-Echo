@@ -25,6 +25,7 @@ from .marketing import LocalMarketingRepository, MarketingCampaignService, Marke
 from .marketing import MarketingApprovalService, MarketingSafetyService, MarketingSchedulerService
 from .marketing import MarketingDeliveryService
 from .marketing import MarketingAnalyticsService
+from .marketing import MarketingOptimizationService
 from .marketing.schemas import (
     ApprovalResultResponse,
     AnalyticsSummaryResponse,
@@ -38,6 +39,7 @@ from .marketing.schemas import (
     GenerateVariantsRequest,
     GenerateVariantsResponse,
     PerformanceEventResponse,
+    OptimizationSummaryResponse,
     RecordPerformanceEventRequest,
     ScheduleCampaignRequest,
     ScheduleCampaignResponse,
@@ -68,6 +70,7 @@ marketing_approval_service = MarketingApprovalService(marketing_repository, mark
 marketing_scheduler_service = MarketingSchedulerService(marketing_repository)
 marketing_delivery_service = MarketingDeliveryService(marketing_repository, settings)
 marketing_analytics_service = MarketingAnalyticsService(marketing_repository)
+marketing_optimization_service = MarketingOptimizationService(marketing_repository, marketing_analytics_service)
 
 app = FastAPI(title=settings.app_name)
 app.add_middleware(
@@ -295,6 +298,23 @@ async def get_campaign_analytics(campaign_id: str, _: AuthDep, __: RateDep) -> A
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
     return marketing_analytics_service.summary(campaign_id=campaign_id)
+
+
+@app.post("/api/marketing/optimize", response_model=OptimizationSummaryResponse)
+async def optimize_marketing(_: AuthDep, __: RateDep, campaign_id: str | None = None) -> OptimizationSummaryResponse:
+    if campaign_id:
+        campaign = marketing_repository.get_campaign(campaign_id)
+        if not campaign:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+    return marketing_optimization_service.optimize(campaign_id=campaign_id)
+
+
+@app.post("/api/marketing/optimize/campaigns/{campaign_id}", response_model=OptimizationSummaryResponse)
+async def optimize_campaign(campaign_id: str, _: AuthDep, __: RateDep) -> OptimizationSummaryResponse:
+    campaign = marketing_repository.get_campaign(campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return marketing_optimization_service.optimize(campaign_id=campaign_id)
 
 
 @app.get("/api/status", response_model=StatusResponse)

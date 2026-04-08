@@ -416,6 +416,14 @@ class LocalMarketingRepository:
             for row in rows
         ]
 
+    def update_variant_score(self, variant_id: str, score: float) -> CampaignVariantResponse | None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE campaign_variants SET score = ? WHERE id = ?",
+                (score, variant_id),
+            )
+        return self.get_variant(variant_id)
+
     def update_variant_approval(self, variant_id: str, approval_status: str) -> CampaignVariantResponse | None:
         with self._connect() as conn:
             conn.execute(

@@ -260,6 +260,16 @@ class AnalyticsSummaryResponse(BaseModel):
     memory_hints: list[str] = Field(default_factory=list)
 
 
+class OptimizationSummaryResponse(BaseModel):
+    campaign_id: str | None = None
+    top_platform: str
+    recommended_cta_style: str
+    recommended_posting_window: str
+    prompt_bias_hints: list[str] = Field(default_factory=list)
+    updated_variant_ids: list[str] = Field(default_factory=list)
+    analytics_summary: AnalyticsSummaryResponse
+
+
 class ExperimentRunResponse(BaseModel):
     id: str
     campaign_id: str
