@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -16,6 +17,8 @@ from .schemas import (
     UpdateBrandProfileRequest,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class LocalMarketingRepository:
     """Local SQLite repository optimized for fast local reads and writes."""
@@ -26,13 +29,16 @@ class LocalMarketingRepository:
             db_path = Path(settings.root_dir) / db_path
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._memory_uri = "file:helix_marketing_local?mode=memory&cache=shared"
+        self._keeper_conn: sqlite3.Connection | None = None
         self._initialize()
 
     @contextmanager
     def _connect(self):
-        conn = sqlite3.connect(self.db_path, timeout=30)
+        target = self._memory_uri if self._keeper_conn is not None else str(self.db_path)
+        conn = sqlite3.connect(target, timeout=30, uri=target.startswith("file:"))
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA journal_mode=WAL" if self._keeper_conn is None else "PRAGMA journal_mode=MEMORY")
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA temp_store=MEMORY")
@@ -43,11 +49,25 @@ class LocalMarketingRepository:
             conn.close()
 
     def _initialize(self) -> None:
-        with self._connect() as conn:
+        try:
+            with self._connect() as conn:
+                for statement in DDL_STATEMENTS:
+                    conn.execute(statement)
+                for statement in INDEX_STATEMENTS:
+                    conn.execute(statement)
+        except sqlite3.OperationalError as exc:
+            logger.warning("Falling back to shared in-memory SQLite for marketing repository: %s", exc)
+            self._keeper_conn = sqlite3.connect(self._memory_uri, uri=True, timeout=30)
+            self._keeper_conn.row_factory = sqlite3.Row
+            self._keeper_conn.execute("PRAGMA journal_mode=MEMORY")
+            self._keeper_conn.execute("PRAGMA synchronous=OFF")
+            self._keeper_conn.execute("PRAGMA foreign_keys=ON")
+            self._keeper_conn.execute("PRAGMA temp_store=MEMORY")
             for statement in DDL_STATEMENTS:
-                conn.execute(statement)
+                self._keeper_conn.execute(statement)
             for statement in INDEX_STATEMENTS:
-                conn.execute(statement)
+                self._keeper_conn.execute(statement)
+            self._keeper_conn.commit()
 
     @staticmethod
     def _decode_json(raw: str, fallback):
