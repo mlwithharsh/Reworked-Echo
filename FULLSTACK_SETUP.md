@@ -71,3 +71,26 @@ Set-Location -LiteralPath 'D:\HELIX V1'
 - `POST /api/feedback`
 - `POST /api/training/run`
 - `GET /api/model/versions`
+
+## Marketing Agent Smoke Test
+
+With the FastAPI backend running locally:
+
+```powershell
+Set-Location -LiteralPath 'D:\ECHO V1'
+$env:HELIX_API_TOKEN='dev-token'
+.venv\Scripts\python smoke_marketing_local.py --base-url http://localhost:8000
+```
+
+What it verifies:
+
+- platform health endpoint is reachable
+- brand profile creation works
+- campaign creation works
+- strategy generation works
+- variant generation works
+- approval and scheduling work
+- dry-run dispatch writes a delivery log
+- analytics and optimization endpoints respond
+
+For live posting, configure platform credentials first through the Agent UI or environment variables.

@@ -81,6 +81,7 @@ const platformCredentialFields = {
 const AgentPage = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [workspaceNotice, setWorkspaceNotice] = useState('');
   const [brands, setBrands] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
   const [variants, setVariants] = useState([]);
@@ -171,7 +172,7 @@ const AgentPage = () => {
   async function loadDashboard() {
     setLoading(true);
     try {
-      const [brandRes, campaignRes, scheduleRes, logRes, analyticsRes, healthRes, credentialRes] = await Promise.all([
+      const [brandRes, campaignRes, scheduleRes, logRes, analyticsRes, healthRes, credentialRes] = await Promise.allSettled([
         marketingAPI.listBrandProfiles(),
         marketingAPI.listCampaigns(),
         marketingAPI.listSchedules(),
@@ -180,22 +181,45 @@ const AgentPage = () => {
         marketingAPI.getPlatformHealth(),
         marketingAPI.listChannelCredentials(),
       ]);
+      const brandsData = settledData(brandRes, []);
+      const campaignsData = settledData(campaignRes, []);
+      const schedulesData = settledData(scheduleRes, []);
+      const logsData = settledData(logRes, []);
+      const analyticsData = settledData(analyticsRes, null);
+      const healthData = settledData(healthRes, []);
+      const credentialsData = settledData(credentialRes, []);
+      const failures = [brandRes, campaignRes, scheduleRes, logRes, analyticsRes, healthRes, credentialRes].filter(
+        (item) => item.status === 'rejected',
+      );
+      const hardFailure = failures.length === 7;
+
       startTransition(() => {
-        setBrands(brandRes.data || []);
-        setCampaigns(campaignRes.data || []);
-        setSchedules(scheduleRes.data || []);
-        setLogs(logRes.data || []);
-        setPlatformHealth(healthRes.data || []);
-        setChannelCredentials(credentialRes.data || []);
-        setAnalytics(analyticsRes.data || null);
+        setBrands(brandsData);
+        setCampaigns(campaignsData);
+        setSchedules(schedulesData);
+        setLogs(logsData);
+        setPlatformHealth(healthData);
+        setChannelCredentials(credentialsData);
+        setAnalytics(analyticsData);
       });
-      if (!selectedBrandId && brandRes.data?.[0]) {
-        setSelectedBrandId(brandRes.data[0].id);
+      if (hardFailure) {
+        setWorkspaceNotice('Marketing backend is unreachable or not deployed with the latest routes yet.');
+      } else if (failures.length) {
+        setWorkspaceNotice('Agent loaded in fallback mode. Some marketing endpoints are unavailable, but the page is still usable.');
+      } else {
+        setWorkspaceNotice('');
       }
-      if (!selectedCampaignId && campaignRes.data?.[0]) {
-        setSelectedCampaignId(campaignRes.data[0].id);
+      if (!selectedBrandId && brandsData[0]) {
+        setSelectedBrandId(brandsData[0].id);
+      }
+      if (!selectedCampaignId && campaignsData[0]) {
+        setSelectedCampaignId(campaignsData[0].id);
+      }
+      if (hardFailure) {
+        toast.error('Marketing backend is not reachable from the Agent page');
       }
     } catch (error) {
+      setWorkspaceNotice('Marketing backend is unreachable or not deployed with the latest routes yet.');
       toast.error(readError(error, 'Failed to load agent workspace'));
     } finally {
       setLoading(false);
@@ -205,14 +229,17 @@ const AgentPage = () => {
   async function loadCampaignWorkspace(campaignId) {
     setRefreshing(true);
     try {
-      const [variantRes, analyticsRes] = await Promise.all([
+      const [variantRes, analyticsRes] = await Promise.allSettled([
         marketingAPI.listVariants(campaignId),
         marketingAPI.getCampaignAnalytics(campaignId),
       ]);
       startTransition(() => {
-        setVariants(variantRes.data?.items || []);
-        setAnalytics(analyticsRes.data || null);
+        setVariants(settledData(variantRes, [], 'items'));
+        setAnalytics(settledData(analyticsRes, analytics));
       });
+      if (variantRes.status === 'rejected' || analyticsRes.status === 'rejected') {
+        setWorkspaceNotice('Some campaign-level data could not be loaded. Backend routes may be incomplete.');
+      }
     } catch (error) {
       toast.error(readError(error, 'Failed to load campaign workspace'));
     } finally {
@@ -502,6 +529,11 @@ const AgentPage = () => {
     <div className="pt-20 pb-20">
       <section className="px-6 pt-8">
         <div className="max-w-7xl mx-auto">
+          {workspaceNotice ? (
+            <div className="mb-4 rounded-3xl border border-[#bfa98b]/28 bg-[rgba(191,169,139,0.12)] px-5 py-4 text-sm leading-relaxed text-text-secondary">
+              {workspaceNotice}
+            </div>
+          ) : null}
           <div className="glass-card p-8 md:p-10 overflow-hidden relative">
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(127,148,118,0.18),transparent_38%),radial-gradient(circle_at_bottom_right,rgba(191,169,139,0.16),transparent_34%)]" />
             <div className="relative z-10 flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
