@@ -36,7 +36,7 @@ Open a second terminal:
 
 ```powershell
 Set-Location -LiteralPath 'D:\ECHO V1\helix-frontend'
-$env:VITE_BACKEND_URL='http://localhost:8000'
+$env:VITE_BACKEND_URL='http://localhost:8001'
 $env:VITE_API_TOKEN='dev-token'
 npm run dev
 ```

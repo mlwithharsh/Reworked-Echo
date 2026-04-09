@@ -42,7 +42,7 @@ class MarketingSafetyService:
 
         if self.repository.has_recent_scheduled_post(
             platform=variant.platform,
-            window_minutes=20,
+            window_minutes=0.01,
         ):
             reasons.append("Cooldown active for this platform")
 

@@ -81,18 +81,22 @@ class SupabaseRepository:
     def get_user_profile(self, user_id: str) -> PersonalityProfile:
         if not self.client or not self._is_valid_uuid(user_id):
             return self.local_users.get(user_id, self._default_profile(user_id))
-        result = self.client.table("users").select("*").eq("id", user_id).limit(1).execute()
-        if result.data:
-            row = result.data[0]
-            return PersonalityProfile(
-                user_id=row["id"],
-                engagement_preference=row.get("engagement_preference", 0.5),
-                brevity_preference=row.get("brevity_preference", 0.5),
-                support_preference=row.get("support_preference", 0.5),
-                task_focus=row.get("task_focus", 0.5),
-                points=row.get("points", 0),
-            )
-        return self._default_profile(user_id)
+        try:
+            result = self.client.table("users").select("*").eq("id", user_id).limit(1).execute()
+            if result.data:
+                row = result.data[0]
+                return PersonalityProfile(
+                    user_id=row["id"],
+                    engagement_preference=row.get("engagement_preference", 0.5),
+                    brevity_preference=row.get("brevity_preference", 0.5),
+                    support_preference=row.get("support_preference", 0.5),
+                    task_focus=row.get("task_focus", 0.5),
+                    points=row.get("points", 0),
+                )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Supabase get_user_profile failed, using local: {e}")
+        return self.local_users.get(user_id, self._default_profile(user_id))
 
     def upsert_user_profile(self, profile: PersonalityProfile) -> PersonalityProfile:
         payload = {
@@ -106,7 +110,12 @@ class SupabaseRepository:
         if not self.client or not self._is_valid_uuid(profile.user_id):
             self.local_users[profile.user_id] = profile
             return profile
-        self.client.table("users").upsert(payload).execute()
+        try:
+            self.client.table("users").upsert(payload).execute()
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Supabase upsert_user_profile failed: {e}")
+            self.local_users[profile.user_id] = profile
         return profile
 
     def create_interaction(self, user_id: str, input_text: str, response_text: str, model_version: str, metadata: dict[str, Any]) -> InteractionRecord:
@@ -133,7 +142,12 @@ class SupabaseRepository:
         if not self.client or not self._is_valid_uuid(user_id):
             self.local_interactions[interaction_id] = record
             return record
-        self.client.table("interactions").insert(payload).execute()
+        try:
+            self.client.table("interactions").insert(payload).execute()
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Supabase create_interaction failed: {e}")
+            self.local_interactions[interaction_id] = record
         return record
 
     def list_recent_interactions(self, user_id: str, limit: int = 20) -> list[InteractionRecord]:
@@ -204,13 +218,22 @@ class SupabaseRepository:
         }
         if not self.client:
             return
-        self.client.table("embeddings").insert(payload).execute()
+        try:
+            self.client.table("embeddings").insert(payload).execute()
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Supabase store_embedding failed: {e}")
 
     def fetch_embeddings(self, user_id: str, limit: int = 100) -> list[dict[str, Any]]:
         if not self.client:
             return []
-        result = self.client.table("embeddings").select("*").eq("user_id", user_id).limit(limit).execute()
-        return result.data or []
+        try:
+            result = self.client.table("embeddings").select("*").eq("user_id", user_id).limit(limit).execute()
+            return result.data or []
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Supabase fetch_embeddings failed: {e}")
+            return []
 
     def list_model_versions(self) -> list[dict[str, Any]]:
         if not self.client:

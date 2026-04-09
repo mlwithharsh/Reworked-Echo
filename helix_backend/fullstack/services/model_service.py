@@ -156,7 +156,7 @@ class AdaptiveInferenceService:
                 elapsed = max(asyncio.get_running_loop().time() - start_ts, 0.001)
                 yield json.dumps({
                     "type": "delta",
-                    "content": token,
+                    "token": token,
                     "metrics": {
                         "tokens_per_sec": round(token_count / elapsed, 2),
                         "latency_sec": round((first_token_at or asyncio.get_running_loop().time()) - start_ts, 2),

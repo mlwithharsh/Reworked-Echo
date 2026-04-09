@@ -57,8 +57,14 @@ class MarketingCredentialService:
         return self._fernet.encrypt(json.dumps(payload).encode("utf-8")).decode("utf-8")
 
     def _decrypt(self, encrypted_blob: str) -> dict[str, object]:
-        decrypted = self._fernet.decrypt(encrypted_blob.encode("utf-8"))
-        return json.loads(decrypted.decode("utf-8"))
+        try:
+            from cryptography.fernet import InvalidToken
+            decrypted = self._fernet.decrypt(encrypted_blob.encode("utf-8"))
+            return json.loads(decrypted.decode("utf-8"))
+        except (InvalidToken, Exception) as e:
+            # If decryption fails, the key might have changed or data is corrupted
+            # We return an empty payload to avoid crashing the entire service
+            return {"error": "Decryption failed", "details": str(e)}
 
     def _with_configured_fields(self, item: ChannelCredentialResponse) -> ChannelCredentialResponse:
         blob = self.repository.get_channel_credential_blob(platform=item.platform, account_label=item.account_label)

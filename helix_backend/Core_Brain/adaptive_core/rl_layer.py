@@ -1,4 +1,4 @@
-git class ReinforcementLearningLayer:
+class ReinforcementLearningLayer:
     def __init__(self):
         self.q_values = {
             "supportive": 0.55,

@@ -439,27 +439,30 @@ async def stream_chat(request: ChatRequest, _: AuthDep, __: RateDep):
 
     async def stream():
         async for item in iterator:
-            yield item
+            yield f"data: {item.strip()}\n\n"
         final_response = response_state["text"]
         interaction = repository.create_interaction(request.user_id, request.message, final_response, metadata["model_version"], metadata)
         repository.store_embedding(interaction.id, request.user_id, embedding_preprocessor._hash_embedding(request.message), request.message)
         logger.info(f"[StreamChat] user={request.user_id} personality={request.personality} backend={metadata['generation_backend']}")
-        yield json.dumps({
+        final_payload = {
             "type": "done",
             "interaction_id": interaction.id,
             "response": final_response,
             "system_label": "Adapting to your preferences",
             "profile": profile.model_dump(),
             "metadata": metadata,
-        }) + "\n"
+        }
+        yield f"data: {json.dumps(final_payload)}\n\n"
+        yield "data: [DONE]\n\n"
 
     return StreamingResponse(
         stream(),
-        media_type="application/x-ndjson",
+        media_type="text/event-stream",
         headers={
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Headers": "*",
             "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
         }
     )
 

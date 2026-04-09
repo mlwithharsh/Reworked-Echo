@@ -3,11 +3,13 @@ import json
 
 url = "http://localhost:8000/api/chat/stream"
 payload = {
+    "user_id": "test-user-sonnet",
     "message": "Hey Suzi, what are you doing right now?",
     "personality": "suzi"
 }
 headers = {
-    "Content-Type": "application/json"
+    "Content-Type": "application/json",
+    "x-api-token": "dev-token"
 }
 
 try:
