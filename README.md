@@ -102,4 +102,3 @@ Explore the specialized guides for each part of the HELIX ecosystem:
 ---
 *HELIX AI evolves from the initial work on ECHO AI and continues to grow with community input.*
 *Created by the Google Deepmind Team - Advanced Agentic Coding.*,,,
-
