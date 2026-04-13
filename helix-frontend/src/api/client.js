@@ -79,4 +79,23 @@ export const marketingAPI = {
   optimizeCampaign: (campaignId) => api.post(`/api/marketing/optimize/campaigns/${campaignId}`),
 };
 
+export const smartParksAPI = {
+  getDashboard: () => api.get('/api/smart-parks/dashboard'),
+  getSummary: () => api.get('/api/smart-parks/summary'),
+  listParks: () => api.get('/api/smart-parks/parks'),
+  listZones: (parkId) => api.get('/api/smart-parks/zones', { params: parkId ? { park_id: parkId } : {} }),
+  listDevices: (parkId) => api.get('/api/smart-parks/devices', { params: parkId ? { park_id: parkId } : {} }),
+  listReadings: (params = {}) => api.get('/api/smart-parks/readings', { params }),
+  ingestReadings: (payload) => api.post('/api/smart-parks/readings/ingest', payload),
+  simulate: (payload) => api.post('/api/smart-parks/simulate', payload),
+  listAlerts: (params = {}) => api.get('/api/smart-parks/alerts', { params }),
+  acknowledgeAlert: (alertId) => api.post(`/api/smart-parks/alerts/${alertId}/acknowledge`),
+  resolveAlert: (alertId) => api.post(`/api/smart-parks/alerts/${alertId}/resolve`),
+  listWorkOrders: (params = {}) => api.get('/api/smart-parks/work-orders', { params }),
+  createWorkOrder: (payload) => api.post('/api/smart-parks/work-orders', payload),
+  updateWorkOrder: (workOrderId, payload) => api.patch(`/api/smart-parks/work-orders/${workOrderId}`, payload),
+  getParkRisks: () => api.get('/api/smart-parks/park-risks'),
+  getReportOverview: () => api.get('/api/smart-parks/reports/overview'),
+};
+
 export default api;

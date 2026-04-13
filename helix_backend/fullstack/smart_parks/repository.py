@@ -557,3 +557,136 @@ class SmartParksRepository:
                 ),
             )
         return self._alert_from_row(row)
+
+    def run_simulation(self, ticks: int = 1, park_id: str | None = None) -> SimulationResponse:
+        generated_readings = 0
+        generated_alerts = 0
+        affected_parks: set[str] = set()
+        for _ in range(max(1, ticks)):
+            payload_items = []
+            for device in self.list_devices(park_id=park_id):
+                affected_parks.add(device.park_id)
+                for metric_key, unit, value in self._simulate_metrics(device):
+                    payload_items.append(
+                        {
+                            "device_id": device.id,
+                            "metric_key": metric_key,
+                            "metric_value": value,
+                            "unit": unit,
+                            "metadata": {"simulated": True},
+                        }
+                    )
+            response = self.ingest_readings(IngestReadingsRequest(readings=payload_items))
+            generated_readings += response.accepted
+            generated_alerts += response.alerts_created
+        return SimulationResponse(
+            ticks=ticks,
+            readings_created=generated_readings,
+            alerts_created=generated_alerts,
+            affected_parks=sorted(affected_parks),
+        )
+
+    def _simulate_metrics(self, device: DeviceResponse) -> list[tuple[str, str, float]]:
+        if device.device_type == "tree":
+            return [
+                ("tree_tilt_deg", "deg", round(random.uniform(2.0, 11.5), 2)),
+                ("tree_bark_temp_c", "c", round(random.uniform(27.0, 40.5), 2)),
+            ]
+        if device.device_type == "soil":
+            return [
+                ("soil_moisture_pct", "%", round(random.uniform(16.0, 48.0), 2)),
+                ("soil_npk_index", "index", round(random.uniform(24.0, 76.0), 2)),
+                ("soil_ph", "ph", round(random.uniform(5.0, 8.9), 2)),
+            ]
+        if device.device_type == "water":
+            return [
+                ("water_tds_ppm", "ppm", round(random.uniform(420.0, 1350.0), 2)),
+                ("water_turbidity_ntu", "ntu", round(random.uniform(8.0, 42.0), 2)),
+                ("water_dissolved_oxygen_mg_l", "mg/l", round(random.uniform(2.0, 7.0), 2)),
+            ]
+        return [("gateway_heartbeat", "count", 1.0)]
+
+    def dashboard_summary(self) -> DashboardSummaryResponse:
+        parks = self.list_parks()
+        zones = self.list_zones()
+        devices = self.list_devices()
+        alerts = self.list_alerts(status="open")
+        work_orders = self.list_work_orders()
+        readings = self.list_readings(limit=50)
+        online_devices = len([device for device in devices if device.status == "online"])
+        open_work_orders = len([item for item in work_orders if item.status not in {"resolved", "closed"}])
+        readiness_score = round(((online_devices / max(1, len(devices))) * 60) + (max(0, 20 - len(alerts)) / 20 * 20) + 20, 2)
+        return DashboardSummaryResponse(
+            park_count=len(parks),
+            zone_count=len(zones),
+            device_count=len(devices),
+            online_devices=online_devices,
+            active_alerts=len(alerts),
+            open_work_orders=open_work_orders,
+            latest_readings=len(readings),
+            readiness_score=min(readiness_score, 100),
+            budget=BudgetSnapshotResponse(),
+        )
+
+    def park_risk_summary(self) -> list[ParkRiskSummaryResponse]:
+        risks: list[ParkRiskSummaryResponse] = []
+        alerts = self.list_alerts()
+        work_orders = self.list_work_orders()
+        now = datetime.now(timezone.utc)
+        default_tree = ReadingResponse(id="", park_id="", device_id="", sensor_type="tree", metric_key="", metric_value=0, unit="", risk_level="normal", recorded_at=now)
+        default_soil = ReadingResponse(id="", park_id="", device_id="", sensor_type="soil", metric_key="", metric_value=0, unit="", risk_level="normal", recorded_at=now)
+        default_water = ReadingResponse(id="", park_id="", device_id="", sensor_type="water", metric_key="", metric_value=0, unit="", risk_level="normal", recorded_at=now)
+        for park in self.list_parks():
+            readings = self.list_readings(park_id=park.id, limit=50)
+            latest_by_sensor: dict[str, ReadingResponse] = {}
+            for reading in readings:
+                latest_by_sensor.setdefault(reading.sensor_type, reading)
+            park_alerts = [item for item in alerts if item.park_id == park.id and item.status != "resolved"]
+            park_orders = [item for item in work_orders if item.park_id == park.id and item.status not in {"resolved", "closed"}]
+            note = park_alerts[0].message if park_alerts else (readings[0].metric_key.replace("_", " ") if readings else "Awaiting telemetry")
+            risks.append(
+                ParkRiskSummaryResponse(
+                    park_id=park.id,
+                    park_name=park.name,
+                    latest_tree_risk=latest_by_sensor.get("tree", default_tree).risk_level,
+                    latest_soil_risk=latest_by_sensor.get("soil", default_soil).risk_level,
+                    latest_water_risk=latest_by_sensor.get("water", default_water).risk_level,
+                    open_alerts=len(park_alerts),
+                    open_work_orders=len(park_orders),
+                    latest_note=note,
+                )
+            )
+        return risks
+
+    def reports_overview(self) -> ReportsOverviewResponse:
+        alerts = self.list_alerts()
+        resolved = len([item for item in alerts if item.status == "resolved"])
+        unresolved = len(alerts) - resolved
+        devices = self.list_devices()
+        batteries = [item.battery_level for item in devices if item.battery_level is not None]
+        readings = self.list_readings(limit=250)
+        risk_distribution = {"normal": 0, "watch": 0, "warning": 0, "critical": 0}
+        for reading in readings:
+            risk_distribution[reading.risk_level] = risk_distribution.get(reading.risk_level, 0) + 1
+        return ReportsOverviewResponse(
+            generated_at=datetime.now(timezone.utc),
+            pilot_window="90-day pilot setup with rolling telemetry baseline",
+            total_alerts=len(alerts),
+            resolved_alerts=resolved,
+            unresolved_alerts=unresolved,
+            average_battery_level=round(sum(batteries) / len(batteries), 2) if batteries else 0,
+            risk_distribution=risk_distribution,
+            park_summaries=self.park_risk_summary(),
+        )
+
+    def dashboard_bundle(self) -> DashboardBundleResponse:
+        return DashboardBundleResponse(
+            summary=self.dashboard_summary(),
+            parks=self.list_parks(),
+            zones=self.list_zones(),
+            devices=self.list_devices(),
+            readings=self.list_readings(limit=120),
+            alerts=self.list_alerts(),
+            work_orders=self.list_work_orders(),
+            park_risks=self.park_risk_summary(),
+        )

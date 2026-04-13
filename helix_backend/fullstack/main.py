@@ -27,6 +27,7 @@ from .marketing import MarketingDeliveryService
 from .marketing import MarketingAnalyticsService
 from .marketing import MarketingOptimizationService
 from .marketing import MarketingCredentialService
+from .smart_parks import SmartParksRepository
 from .marketing.schemas import (
     ApprovalResultResponse,
     AnalyticsSummaryResponse,
@@ -52,6 +53,24 @@ from .marketing.schemas import (
     UpsertChannelCredentialRequest,
     UpdateBrandProfileRequest,
 )
+from .smart_parks.schemas import (
+    AlertResponse as SmartParkAlertResponse,
+    CreateWorkOrderRequest,
+    DashboardBundleResponse,
+    DashboardSummaryResponse,
+    DeviceResponse,
+    IngestReadingsRequest,
+    IngestReadingsResponse,
+    ParkResponse,
+    ParkRiskSummaryResponse,
+    ReadingResponse,
+    ReportsOverviewResponse,
+    SimulationRequest,
+    SimulationResponse,
+    UpdateWorkOrderRequest,
+    WorkOrderResponse,
+    ZoneResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +95,7 @@ marketing_scheduler_service = MarketingSchedulerService(marketing_repository)
 marketing_delivery_service = MarketingDeliveryService(marketing_repository, settings, marketing_credential_service)
 marketing_analytics_service = MarketingAnalyticsService(marketing_repository)
 marketing_optimization_service = MarketingOptimizationService(marketing_repository, marketing_analytics_service)
+smart_parks_repository = SmartParksRepository(settings)
 
 app = FastAPI(title=settings.app_name)
 app.add_middleware(
@@ -339,6 +359,128 @@ async def optimize_campaign(campaign_id: str, _: AuthDep, __: RateDep) -> Optimi
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
     return marketing_optimization_service.optimize(campaign_id=campaign_id)
+
+
+@app.get("/api/smart-parks/dashboard", response_model=DashboardBundleResponse)
+async def get_smart_parks_dashboard(_: AuthDep, __: RateDep) -> DashboardBundleResponse:
+    return smart_parks_repository.dashboard_bundle()
+
+
+@app.get("/api/smart-parks/summary", response_model=DashboardSummaryResponse)
+async def get_smart_parks_summary(_: AuthDep, __: RateDep) -> DashboardSummaryResponse:
+    return smart_parks_repository.dashboard_summary()
+
+
+@app.get("/api/smart-parks/parks", response_model=list[ParkResponse])
+async def list_smart_parks(_: AuthDep, __: RateDep) -> list[ParkResponse]:
+    return smart_parks_repository.list_parks()
+
+
+@app.get("/api/smart-parks/parks/{park_id}", response_model=ParkResponse)
+async def get_smart_park(park_id: str, _: AuthDep, __: RateDep) -> ParkResponse:
+    park = smart_parks_repository.get_park(park_id)
+    if not park:
+        raise HTTPException(status_code=404, detail="Park not found")
+    return park
+
+
+@app.get("/api/smart-parks/zones", response_model=list[ZoneResponse])
+async def list_smart_park_zones(_: AuthDep, __: RateDep, park_id: str | None = None) -> list[ZoneResponse]:
+    return smart_parks_repository.list_zones(park_id=park_id)
+
+
+@app.get("/api/smart-parks/devices", response_model=list[DeviceResponse])
+async def list_smart_park_devices(_: AuthDep, __: RateDep, park_id: str | None = None) -> list[DeviceResponse]:
+    return smart_parks_repository.list_devices(park_id=park_id)
+
+
+@app.get("/api/smart-parks/readings", response_model=list[ReadingResponse])
+async def list_smart_park_readings(
+    _: AuthDep,
+    __: RateDep,
+    park_id: str | None = None,
+    device_id: str | None = None,
+    limit: int = 100,
+) -> list[ReadingResponse]:
+    return smart_parks_repository.list_readings(park_id=park_id, device_id=device_id, limit=limit)
+
+
+@app.post("/api/smart-parks/readings/ingest", response_model=IngestReadingsResponse)
+async def ingest_smart_park_readings(payload: IngestReadingsRequest, _: AuthDep, __: RateDep) -> IngestReadingsResponse:
+    return smart_parks_repository.ingest_readings(payload)
+
+
+@app.post("/api/smart-parks/simulate", response_model=SimulationResponse)
+async def simulate_smart_parks(payload: SimulationRequest, _: AuthDep, __: RateDep) -> SimulationResponse:
+    return smart_parks_repository.run_simulation(ticks=payload.ticks, park_id=payload.park_id)
+
+
+@app.get("/api/smart-parks/alerts", response_model=list[SmartParkAlertResponse])
+async def list_smart_park_alerts(
+    _: AuthDep,
+    __: RateDep,
+    status: str | None = None,
+    park_id: str | None = None,
+) -> list[SmartParkAlertResponse]:
+    return smart_parks_repository.list_alerts(status=status, park_id=park_id)
+
+
+@app.post("/api/smart-parks/alerts/{alert_id}/acknowledge", response_model=SmartParkAlertResponse)
+async def acknowledge_smart_park_alert(alert_id: str, _: AuthDep, __: RateDep) -> SmartParkAlertResponse:
+    alert = smart_parks_repository.acknowledge_alert(alert_id)
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return alert
+
+
+@app.post("/api/smart-parks/alerts/{alert_id}/resolve", response_model=SmartParkAlertResponse)
+async def resolve_smart_park_alert(alert_id: str, _: AuthDep, __: RateDep) -> SmartParkAlertResponse:
+    alert = smart_parks_repository.resolve_alert(alert_id)
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return alert
+
+
+@app.get("/api/smart-parks/work-orders", response_model=list[WorkOrderResponse])
+async def list_smart_park_work_orders(
+    _: AuthDep,
+    __: RateDep,
+    status: str | None = None,
+    park_id: str | None = None,
+) -> list[WorkOrderResponse]:
+    return smart_parks_repository.list_work_orders(status=status, park_id=park_id)
+
+
+@app.post("/api/smart-parks/work-orders", response_model=WorkOrderResponse)
+async def create_smart_park_work_order(
+    payload: CreateWorkOrderRequest,
+    _: AuthDep,
+    __: RateDep,
+) -> WorkOrderResponse:
+    return smart_parks_repository.create_work_order(payload)
+
+
+@app.patch("/api/smart-parks/work-orders/{work_order_id}", response_model=WorkOrderResponse)
+async def update_smart_park_work_order(
+    work_order_id: str,
+    payload: UpdateWorkOrderRequest,
+    _: AuthDep,
+    __: RateDep,
+) -> WorkOrderResponse:
+    work_order = smart_parks_repository.update_work_order(work_order_id, payload)
+    if not work_order:
+        raise HTTPException(status_code=404, detail="Work order not found")
+    return work_order
+
+
+@app.get("/api/smart-parks/park-risks", response_model=list[ParkRiskSummaryResponse])
+async def get_smart_park_risks(_: AuthDep, __: RateDep) -> list[ParkRiskSummaryResponse]:
+    return smart_parks_repository.park_risk_summary()
+
+
+@app.get("/api/smart-parks/reports/overview", response_model=ReportsOverviewResponse)
+async def get_smart_park_report(_: AuthDep, __: RateDep) -> ReportsOverviewResponse:
+    return smart_parks_repository.reports_overview()
 
 
 @app.get("/api/status", response_model=StatusResponse)
