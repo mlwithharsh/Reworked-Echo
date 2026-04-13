@@ -272,7 +272,7 @@ def get_status():
     global request_queue_length
     return jsonify({
         "status": "online",
-        "version": "1.1.0-prod",
+        "version": "beta 1.0.2",
         "provider": "HELIX-HYBRID",
         "network": "online" if is_online else "offline",
         "edge_engine": "warm" if edge_engine.is_loaded else "cold",
