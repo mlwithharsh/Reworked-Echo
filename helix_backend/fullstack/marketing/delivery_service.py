@@ -5,6 +5,7 @@ import logging
 from .adapters import DiscordAdapter, LinkedInAdapter, RedditAdapter, TelegramAdapter, WebhookAdapter, XAdapter
 from .credential_service import MarketingCredentialService
 from .repository import LocalMarketingRepository
+from .scheduler_service import _FallbackRepeatingTimer
 from .schemas import DeliveryLogResponse, PlatformAdapterStatusResponse
 from ..config import Settings
 
@@ -24,6 +25,7 @@ class MarketingDeliveryService:
         self.settings = settings
         self.credential_service = credential_service
         self.scheduler = None
+        self._fallback_timer: _FallbackRepeatingTimer | None = None
         self.adapter_classes = {
             "discord": DiscordAdapter,
             "linkedin": LinkedInAdapter,
@@ -34,25 +36,54 @@ class MarketingDeliveryService:
         }
 
     def start(self) -> None:
-        if BackgroundScheduler is None or self.scheduler is not None:
+        if self.scheduler is not None:
             return
-        self.scheduler = BackgroundScheduler(timezone="UTC")
-        self.scheduler.add_job(self.process_queued_jobs, "interval", seconds=15, id="helix_marketing_delivery")
-        self.scheduler.start()
+
+        if BackgroundScheduler is not None:
+            try:
+                self.scheduler = BackgroundScheduler(timezone="UTC")
+                self.scheduler.add_job(
+                    self.process_queued_jobs, "interval", seconds=15,
+                    id="helix_marketing_delivery",
+                )
+                self.scheduler.start()
+                logger.info("[MarketingDelivery] APScheduler started — auto-dispatching queued jobs every 15s")
+                return
+            except Exception as e:
+                logger.warning("[MarketingDelivery] APScheduler failed to start: %s — falling back to timer", e)
+
+        # Fallback: use a simple threading-based timer
+        self._fallback_timer = _FallbackRepeatingTimer(
+            interval_seconds=15,
+            target=self.process_queued_jobs,
+            name="delivery",
+        )
+        self._fallback_timer.start()
+        logger.info("[MarketingDelivery] Fallback timer started — auto-dispatching queued jobs every 15s")
 
     def shutdown(self) -> None:
         if self.scheduler is not None:
             self.scheduler.shutdown(wait=False)
             self.scheduler = None
+        if self._fallback_timer is not None:
+            self._fallback_timer.shutdown()
+            self._fallback_timer = None
 
-    def process_queued_jobs(self, execution_mode: str = "dry_run") -> int:
+    def process_queued_jobs(self, execution_mode: str = "live") -> int:
+        """Automatically dispatch queued jobs as LIVE posts to configured platforms."""
         jobs = self.repository.list_scheduled_jobs(status="queued")
         processed = 0
         for job in jobs:
-            if self.dispatch_job(job.id, execution_mode=execution_mode):
-                processed += 1
+            try:
+                result = self.dispatch_job(job.id, execution_mode=execution_mode)
+                if result:
+                    processed += 1
+                    logger.info("Auto-dispatched job %s to %s [%s]", job.id, job.platform, execution_mode)
+            except Exception as e:
+                logger.error("Failed to auto-dispatch job %s: %s", job.id, e)
+                self.repository.update_scheduled_job_status(job.id, "failed", str(e))
         if processed:
-            logger.info("Processed %s queued marketing jobs", processed)
+            logger.info("Auto-dispatched %s queued marketing jobs", processed)
         return processed
 
     def platform_statuses(self) -> list[PlatformAdapterStatusResponse]:

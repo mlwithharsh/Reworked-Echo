@@ -152,42 +152,50 @@ class SupabaseRepository:
 
     def list_recent_interactions(self, user_id: str, limit: int = 20) -> list[InteractionRecord]:
         if not self.client:
-            records = [record for record in self.local_interactions.values() if record.user_id == user_id]
-            # Merge local feedback
-            for record in records:
-                matched_fb = next((fb for fb in self.local_feedback if fb.get("interaction_id") == record.id), None)
-                if matched_fb:
-                    record.vote = matched_fb.get("vote")
-                    record.tags = matched_fb.get("tags", [])
-            return sorted(records, key=lambda item: item.created_at)[-limit:]
+            return self._get_local_interactions(user_id, limit)
             
         # Supabase Join if possible, fallback to separate fetch
         try:
-            # We use a join if the foreign key exists, otherwise we'll fetch separately
-            result = self.client.table("interactions").select("*, feedback(vote, tags)").eq("user_id", user_id).order("timestamp", desc=False).limit(limit).execute()
-        except Exception:
-            # Fallback for when feedback table join fails
-            result = self.client.table("interactions").select("*").eq("user_id", user_id).order("timestamp", desc=False).limit(limit).execute()
+            try:
+                # We use a join if the foreign key exists, otherwise we'll fetch separately
+                result = self.client.table("interactions").select("*, feedback(vote, tags)").eq("user_id", user_id).order("timestamp", desc=False).limit(limit).execute()
+            except Exception:
+                # Fallback for when feedback table join fails
+                result = self.client.table("interactions").select("*").eq("user_id", user_id).order("timestamp", desc=False).limit(limit).execute()
 
-        items = []
-        for row in result.data or []:
-            fb_list = row.get("feedback", [])
-            fb = fb_list[0] if isinstance(fb_list, list) and fb_list else (fb_list if isinstance(fb_list, dict) else {})
-            
-            items.append(
-                InteractionRecord(
-                    id=row["id"],
-                    user_id=row["user_id"],
-                    input_text=row["input"],
-                    response_text=row["response"],
-                    model_version=row.get("model_version", self.settings.active_model_version),
-                    metadata=row.get("metadata", {}),
-                    created_at=datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00")),
-                    vote=fb.get("vote"),
-                    tags=fb.get("tags", [])
+            items = []
+            for row in result.data or []:
+                fb_list = row.get("feedback", [])
+                fb = fb_list[0] if isinstance(fb_list, list) and fb_list else (fb_list if isinstance(fb_list, dict) else {})
+                
+                items.append(
+                    InteractionRecord(
+                        id=row["id"],
+                        user_id=row["user_id"],
+                        input_text=row["input"],
+                        response_text=row["response"],
+                        model_version=row.get("model_version", self.settings.active_model_version),
+                        metadata=row.get("metadata", {}),
+                        created_at=datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00")),
+                        vote=fb.get("vote"),
+                        tags=fb.get("tags", [])
+                    )
                 )
-            )
-        return items
+            return items
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Supabase connection/query failed in list_recent_interactions: {e}")
+            return self._get_local_interactions(user_id, limit)
+
+    def _get_local_interactions(self, user_id: str, limit: int = 20) -> list[InteractionRecord]:
+        records = [record for record in self.local_interactions.values() if record.user_id == user_id]
+        # Merge local feedback
+        for record in records:
+            matched_fb = next((fb for fb in self.local_feedback if fb.get("interaction_id") == record.id), None)
+            if matched_fb:
+                record.vote = matched_fb.get("vote")
+                record.tags = matched_fb.get("tags", [])
+        return sorted(records, key=lambda item: item.created_at)[-limit:]
 
     def add_feedback(self, feedback: FeedbackRequest, reward: float) -> None:
         payload = {

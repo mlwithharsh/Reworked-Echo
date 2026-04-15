@@ -9,5 +9,5 @@ if exist ".venv\Scripts\activate.bat" (
 )
 
 cd helix_backend
-python app.py
+python -m uvicorn fullstack.main:app --host 0.0.0.0 --port 8000 --reload
 pause

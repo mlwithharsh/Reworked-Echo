@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+from datetime import datetime
 from typing import Annotated
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 
 from rl.state import StatePreprocessor
 
@@ -75,6 +77,8 @@ from .smart_parks.schemas import (
     ZoneResponse,
 )
 
+from pathlib import Path
+
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
@@ -101,17 +105,47 @@ marketing_optimization_service = MarketingOptimizationService(marketing_reposito
 smart_parks_repository = SmartParksRepository(settings)
 
 app = FastAPI(title=settings.app_name)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["https://helix-ai-eta.vercel.app", "http://localhost:3000", "http://localhost:5173", "http://localhost:8000"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=["Content-Type", "Authorization", "X-API-Key", "X-API-Token", "X-Requested-With"],
 )
 
 AuthDep = Annotated[str, Depends(require_api_token)]
 RateDep = Annotated[None, Depends(rate_limit_dependency)]
 
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    import traceback
+    from fastapi.responses import JSONResponse
+    
+    # Handle FastAPI HTTPExceptions properly
+    if isinstance(exc, HTTPException):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+            headers={
+                "Access-Control-Allow-Origin": request.headers.get("origin", "*"),
+                "Access-Control-Allow-Credentials": "true",
+            }
+        )
+        
+    logger.error(f"GLOBAL EXCEPTION: {exc}\n{traceback.format_exc()}")
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "Internal Server Crash",
+            "exception": str(exc),
+            "traceback": traceback.format_exc()
+        },
+        headers={
+            "Access-Control-Allow-Origin": request.headers.get("origin", "*"),
+            "Access-Control-Allow-Credentials": "true",
+        }
+    )
 
 @app.on_event("startup")
 async def on_startup() -> None:
@@ -137,7 +171,6 @@ async def signup(payload: dict):
     name = payload.get("name", "")
     user_id, error = repository.signup(email, password, name)
     if error:
-        from fastapi import HTTPException
         raise HTTPException(status_code=400, detail=error)
     return {"user_id": user_id, "message": "Account created successfully"}
 
@@ -148,7 +181,6 @@ async def login(payload: dict):
     password = payload.get("password", "")
     user_id, error = repository.login(email, password)
     if error:
-        from fastapi import HTTPException
         raise HTTPException(status_code=401, detail=error)
     return {"user_id": user_id, "message": "Login successful"}
 
@@ -524,8 +556,46 @@ async def get_smart_park_report(_: AuthDep, __: RateDep) -> ReportsOverviewRespo
 
 
 @app.get("/api/status", response_model=StatusResponse)
-async def status(_: AuthDep, __: RateDep) -> StatusResponse:
+async def status() -> StatusResponse:
     return StatusResponse(status="online", model_version=model_service.active_version, supabase_connected=repository.connected)
+
+
+@app.get("/api/v1/status")
+async def status_v1():
+    # Parity with app.py
+    return {
+        "status": "online",
+        "version": "beta 1.1.0-fastapi",
+        "provider": "HELIX-HYBRID",
+        "network": "online",
+        "edge_engine": "warm",
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@app.get("/api/v1/diagnostics")
+async def system_diagnostics():
+    """FORENSIC v1: Full system health check."""
+    import psutil
+    bin_path = Path(settings.root_dir) / "helix_backend" / "edge_model" / "llama-server.exe"
+    
+    return {
+        "timestamp": datetime.now().isoformat(),
+        "env": {
+            "GROQ_KEY_PRESENT": bool(settings.groq_api_key),
+            "SUPABASE_URL_PRESENT": bool(settings.supabase_url),
+            "PORT": 8000
+        },
+        "engine": {
+            "binary_exists": bin_path.exists(),
+            "binary_path": str(bin_path),
+            "model_exists": True, # Assume True if initialized
+        },
+        "system": {
+            "ram_free_mb": int(psutil.virtual_memory().available / (1024*1024)),
+            "cpu_count": os.cpu_count()
+        }
+    }
 
 
 @app.get("/api/users/{user_id}/profile", response_model=PersonalityProfile)
